@@ -1,11 +1,12 @@
 .claude/
-
-*.md
-!README.md
-!CONTRIBUTING.md
-!CLA.md
+HANDOFF.md
+SESSION_NOTES.md
+NEXT_SESSION.md
+INBOX.md
 
 .vs/
+*.csproj.user
+*.suo
 
 [Bb]in/
 [Oo]bj/
@@ -16,9 +17,20 @@ packages/
 __pycache__/
 *.py[cod]
 *.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
 .venv/
 venv/
 env/
+
+# Local configuration and credentials. Keep the public template tracked.
+.env
+.env.*
+!.env.example
 
 *.log
 
@@ -26,6 +38,26 @@ Thumbs.db
 .DS_Store
 
 drawing-samples/
+outputs/
+captures/
+.solidpilot/
+
+# Local CAD and rendered verification artifacts.
+*.SLDPRT
+*.SLDASM
+*.SLDDRW
+*.sldprt
+*.sldasm
+*.slddrw
+*.STEP
+*.STP
+*.IGES
+*.IGS
+*.step
+*.stp
+*.iges
+*.igs
+*.pdf
 
 # Scratch / throwaway dev working files (feature-map dumps, one-off rebuild scripts)
 scratch/

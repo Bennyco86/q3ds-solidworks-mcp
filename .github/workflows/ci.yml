@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-contracts:
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+
+      - name: Install test dependencies
+        run: python -m pip install --require-hashes -r requirements-dev.lock
+
+      - name: Verify MCP and execution contracts
+        run: python adapters/claude/tests/test_schema_contract.py
+
+      - name: Run offline compiler tests
+        run: python solidworks-compiler/pycompiler/tests/test_compiler.py
+
+      - name: Compile Python sources
+        run: python -m compileall -q adapters/claude solidworks-compiler scripts

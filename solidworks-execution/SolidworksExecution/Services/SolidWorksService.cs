@@ -838,6 +838,255 @@ namespace SolidworksExecution.Services
             }
         }
 
+        // Sketch > Text parity: insert TrueType text into the ACTIVE sketch. Anchor is given in
+        // SKETCH coordinates (like every other sketch tool) and converted to the model-space point
+        // InsertSketchText expects via the sketch's inverted ModelToSketchTransform. The created
+        // ISketchText carries its own ITextFormat: CharHeight (meters), Bold/Italic, Escapement
+        // (rotation, radians). Extruding text afterwards goes through the boss path's
+        // selected-contours retry (text = many disjoint contours), so add_sketch_text + extrude
+        // boss is the whole raised-lettering workflow — no ad hoc COM scripts.
+        public ExecutionResponse AddSketchText(ToolRequest request)
+        {
+            if (_guard.IsDuplicate(request.OperationId))
+                return _guard.GetDuplicate(request.OperationId);
+
+            if (!_guard.IsStateVersionValid(request.StateVersion))
+                return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                    "INVALID_STATE_VERSION", "Incoming state_version does not match current state.");
+
+            if (!EnsureConnected())
+                return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                    "COM_ATTACH_FAILED", "SolidWorks process not found or COM not registered.");
+
+            try
+            {
+                var p = request.Params as JObject;
+                string text = p?.Value<string>("text");
+                if (string.IsNullOrEmpty(text))
+                    return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                        "MISSING_PARAMETER", "text is required.");
+
+                double x = p?.Value<double?>("x") ?? 0.0;
+                double y = p?.Value<double?>("y") ?? 0.0;
+                double height = p?.Value<double?>("height") ?? 0.005;
+                double rotationDeg = p?.Value<double?>("rotation_deg") ?? 0.0;
+                bool bold = p?.Value<bool?>("bold") ?? false;
+                bool italic = p?.Value<bool?>("italic") ?? false;
+                string font = p?.Value<string>("font") ?? "";
+
+                var modelDoc = _solidWorks.IActiveDoc2 as IModelDoc2;
+                if (modelDoc == null)
+                    return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                        "NO_ACTIVE_DOCUMENT", "No active document found in SolidWorks.");
+
+                var activeSketch = modelDoc.SketchManager.ActiveSketch;
+                if (activeSketch == null)
+                    return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                        "SKETCH_NOT_ACTIVE", "No active sketch. Call create_sketch first.");
+
+                // Sketch-space anchor -> model-space point for InsertSketchText.
+                double mx = x, my = y, mz = 0.0;
+                try
+                {
+                    var mathUtil = _solidWorks.GetMathUtility() as IMathUtility;
+                    var xform = (activeSketch as ISketch)?.ModelToSketchTransform;
+                    if (mathUtil != null && xform != null)
+                    {
+                        var inv = xform.Inverse() as IMathTransform;
+                        var pt = mathUtil.CreatePoint(new double[] { x, y, 0.0 }) as IMathPoint;
+                        var mpt = pt.MultiplyTransform(inv) as IMathPoint;
+                        double[] arr = mpt.ArrayData as double[];
+                        if (arr != null && arr.Length >= 3) { mx = arr[0]; my = arr[1]; mz = arr[2]; }
+                    }
+                }
+                catch { /* fall back to raw coords (plane sketches at origin) */ }
+
+                // WidthFactor / SpaceBetweenChars are PERCENT ints (100 = normal). Passing 1
+                // collapses every glyph to ~zero width — the letters stack into a self-
+                // intersecting scribble and any subsequent boss/cut finds no valid contour.
+                var sketchText = modelDoc.InsertSketchText(
+                    mx, my, mz, text, 0, 0, 0, 100, 100) as ISketchText;
+                if (sketchText == null)
+                    return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                        "TEXT_CREATION_FAILED",
+                        "InsertSketchText returned null. Ensure a sketch is active and the anchor is on its plane.");
+
+                try
+                {
+                    var fmt = sketchText.GetTextFormat() as ITextFormat;
+                    if (fmt != null)
+                    {
+                        fmt.CharHeight = height;
+                        fmt.Bold = bold;
+                        fmt.Italic = italic;
+                        fmt.Escapement = rotationDeg * Math.PI / 180.0;
+                        if (!string.IsNullOrEmpty(font)) fmt.TypeFaceName = font;
+                        sketchText.SetTextFormat(false, fmt);
+                    }
+                }
+                catch (Exception fmtEx)
+                {
+                    ExecLog.Write($"add_sketch_text: format set failed (text kept): {fmtEx.Message}");
+                }
+
+                string sketchName = (activeSketch as IFeature)?.Name ?? "Sketch";
+                var resultGeom = new JObject
+                {
+                    ["kind"] = "text",
+                    ["text"] = text,
+                    ["x"] = x,
+                    ["y"] = y,
+                    ["height"] = height,
+                    ["rotation_deg"] = rotationDeg
+                };
+
+                var response = new ExecutionResponse
+                {
+                    OperationId = request.OperationId,
+                    Status = "COMPLETED",
+                    Verified = true,
+                    StateVersion = _guard.GetCurrentStateVersion() + 1,
+                    CadState = new CadState
+                    {
+                        StateVersion = _guard.GetCurrentStateVersion() + 1,
+                        ActiveDocument = modelDoc.GetTitle(),
+                        DocumentType = "PART",
+                        ActiveSketch = sketchName,
+                        Features = new List<string>(),
+                        Dimensions = new List<string>()
+                    },
+                    ResultGeometry = resultGeom,
+                    Error = null
+                };
+
+                _guard.RegisterCompleted(request.OperationId, response);
+                return response;
+            }
+            catch (COMException ex)
+            {
+                return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                    "COM_ERROR", ex.Message);
+            }
+            catch (Exception ex)
+            {
+                return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                    "UNEXPECTED_ERROR", ex.Message);
+            }
+        }
+
+        // Direct visual verification: orient to a named view, zoom to fit, and save a PNG of the
+        // model at the requested pixel size. Replaces the create_drawing + add_drawing_view +
+        // export PDF round-trip for "does it look right" checks. Read-only for CAD state (view
+        // orientation is not tracked), so no state_version bump — VerifyState pattern.
+        public ExecutionResponse CaptureView(ToolRequest request)
+        {
+            if (!EnsureConnected())
+                return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                    "COM_ATTACH_FAILED", "SolidWorks process not found or COM not registered.");
+
+            try
+            {
+                var p = request.Params as JObject;
+                string filePath = p?.Value<string>("file_path");
+                if (string.IsNullOrEmpty(filePath))
+                    return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                        "MISSING_PARAMETER", "file_path is required (.png or .bmp).");
+                string view = (p?.Value<string>("view") ?? "isometric").ToLowerInvariant();
+                int width = p?.Value<int?>("width") ?? 1024;
+                int height = p?.Value<int?>("height") ?? 680;
+
+                var modelDoc = _solidWorks.IActiveDoc2 as IModelDoc2;
+                if (modelDoc == null)
+                    return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                        "NO_ACTIVE_DOCUMENT", "No active document found in SolidWorks.");
+
+                string swViewName = null;
+                switch (view)
+                {
+                    case "front": swViewName = "*Front"; break;
+                    case "top": swViewName = "*Top"; break;
+                    case "right": swViewName = "*Right"; break;
+                    case "iso":
+                    case "isometric": swViewName = "*Isometric"; break;
+                    case "back": swViewName = "*Back"; break;
+                    case "bottom": swViewName = "*Bottom"; break;
+                    case "left": swViewName = "*Left"; break;
+                    case "dimetric": swViewName = "*Dimetric"; break;
+                    case "trimetric": swViewName = "*Trimetric"; break;
+                    case "current": break;
+                    default:
+                        return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                            "INVALID_PARAMETER",
+                            $"view '{view}' not recognized. Use front/top/right/iso/back/bottom/left/dimetric/trimetric/current.");
+                }
+                if (swViewName != null)
+                {
+                    modelDoc.ShowNamedView2(swViewName, -1);
+                    modelDoc.ViewZoomtofit2();
+                }
+
+                string dir = System.IO.Path.GetDirectoryName(filePath);
+                if (!string.IsNullOrEmpty(dir)) System.IO.Directory.CreateDirectory(dir);
+
+                bool wantPng = filePath.EndsWith(".png", StringComparison.OrdinalIgnoreCase);
+                string bmpPath = wantPng
+                    ? System.IO.Path.ChangeExtension(filePath, ".capture.bmp")
+                    : filePath;
+
+                bool saved = modelDoc.SaveBMP(bmpPath, width, height);
+                if (!saved || !System.IO.File.Exists(bmpPath))
+                    return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                        "CAPTURE_FAILED", "SaveBMP returned false. Is the model window visible?");
+
+                if (wantPng)
+                {
+                    using (var bmp = new System.Drawing.Bitmap(bmpPath))
+                    {
+                        bmp.Save(filePath, System.Drawing.Imaging.ImageFormat.Png);
+                    }
+                    try { System.IO.File.Delete(bmpPath); } catch { }
+                }
+
+                long bytes = new System.IO.FileInfo(filePath).Length;
+                return new ExecutionResponse
+                {
+                    OperationId = request.OperationId,
+                    Status = "COMPLETED",
+                    Verified = true,
+                    StateVersion = _guard.GetCurrentStateVersion(),
+                    CadState = new CadState
+                    {
+                        StateVersion = _guard.GetCurrentStateVersion(),
+                        ActiveDocument = modelDoc.GetTitle(),
+                        DocumentType = "PART",
+                        ActiveSketch = null,
+                        Features = new List<string>(),
+                        Dimensions = new List<string>()
+                    },
+                    ResultGeometry = new JObject
+                    {
+                        ["kind"] = "capture",
+                        ["path"] = filePath,
+                        ["view"] = view,
+                        ["width"] = width,
+                        ["height"] = height,
+                        ["bytes"] = bytes
+                    },
+                    Error = null
+                };
+            }
+            catch (COMException ex)
+            {
+                return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                    "COM_ERROR", ex.Message);
+            }
+            catch (Exception ex)
+            {
+                return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                    "UNEXPECTED_ERROR", ex.Message);
+            }
+        }
+
         public ExecutionResponse AddDimension(ToolRequest request)
         {
             if (_guard.IsDuplicate(request.OperationId))
@@ -1238,21 +1487,38 @@ namespace SolidworksExecution.Services
                             "FACE_NOT_FOUND",
                             $"up_to_face_index {upToFaceIndex} could not be selected. Call analyze_model(faces) for valid indices.");
 
-                    feature = featureMgr.FeatureExtrusion3(
-                        true, false, reverse,
-                        endCond, 0,
-                        depthVal, 0,
-                        false, false, false, false,
-                        0, 0,
-                        false, false, false, false,
-                        true, true, true,
-                        (int)swStartConditions_e.swStartSketchPlane, 0,
-                        false) as IFeature;
+                    feature = FeatureBossOnce(featureMgr, reverse, endCond, depthVal);
+                    if (feature == null && !string.IsNullOrEmpty(activeProfileSketchName))
+                    {
+                        // Multi-region bosses (dissolved sketch text, several disjoint rectangles,
+                        // logo outlines) can return null when SolidWorks is handed only the whole
+                        // sketch. Retry the UI-equivalent selected-contours path: reopen the sketch,
+                        // select all sketch regions, and create the same boss from those regions.
+                        int selectedRegions = 0;
+                        try
+                        {
+                            selectedRegions = SelectSketchRegionsForFeature(modelDoc, activeProfileSketchName);
+                            if (selectedRegions > 0)
+                                feature = FeatureBossOnce(featureMgr, reverse, endCond, depthVal);
+                        }
+                        finally
+                        {
+                            try
+                            {
+                                var selMgr = modelDoc.SelectionManager as ISelectionMgr;
+                                if (selMgr != null) selMgr.EnableContourSelection = false;
+                            }
+                            catch { }
+                            if (feature == null && modelDoc.SketchManager.ActiveSketch != null)
+                                modelDoc.SketchManager.InsertSketch(true);
+                        }
+                        ExecLog.Write($"boss: selected-contour retry regions={selectedRegions} -> feature={(feature != null)}");
+                    }
                 }
 
                 if (feature == null)
                     return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
-                        "EXTRUSION_FAILED", $"Feature creation returned null for feature_type '{featureType}'. Check the profile is a closed/valid sketch, the cut direction hits existing material, and (cut) a solid body exists.");
+                        "EXTRUSION_FAILED", $"Feature creation returned null for feature_type '{featureType}'. Check the profile is a closed/valid sketch, the cut direction hits existing material, and (cut) a solid body exists. KNOWN CASE: a blind cut sketched on a plane COINCIDENT with a model face fails both directions — offset the reference plane slightly OFF the surface (e.g. +0.5mm) and extend depth by the same amount.");
 
                 var response = new ExecutionResponse
                 {
@@ -6057,6 +6323,57 @@ namespace SolidworksExecution.Services
                 false, false) as IFeature;
         }
 
+        private IFeature FeatureBossOnce(IFeatureManager featureMgr, bool reverse, int endCond, double depthVal)
+        {
+            return featureMgr.FeatureExtrusion3(
+                true, false, reverse,
+                endCond, 0,
+                depthVal, 0,
+                false, false, false, false,
+                0, 0,
+                false, false, false, false,
+                true, true, true,
+                (int)swStartConditions_e.swStartSketchPlane, 0,
+                false) as IFeature;
+        }
+
+        private int SelectSketchRegionsForFeature(IModelDoc2 modelDoc, string sketchName)
+        {
+            if (modelDoc.SketchManager.ActiveSketch != null)
+                modelDoc.SketchManager.InsertSketch(true);
+
+            modelDoc.ClearSelection2(true);
+            bool sketchSelected = modelDoc.Extension.SelectByID2(
+                sketchName, "SKETCH", 0, 0, 0, false, 0, null, 0);
+            if (!sketchSelected) return 0;
+
+            modelDoc.EditSketch();
+            var sketch = modelDoc.SketchManager.ActiveSketch as ISketch;
+            if (sketch == null) return 0;
+
+            var selMgr = modelDoc.SelectionManager as ISelectionMgr;
+            if (selMgr != null) selMgr.EnableContourSelection = true;
+            modelDoc.ClearSelection2(true);
+
+            int selected = 0;
+            object[] regions = sketch.GetSketchRegions() as object[];
+            if (regions != null)
+            {
+                foreach (var raw in regions)
+                {
+                    var region = raw as ISketchRegion;
+                    if (region == null) continue;
+                    try
+                    {
+                        if (region.Select(selected > 0, 0)) selected++;
+                    }
+                    catch { }
+                }
+            }
+
+            return selected;
+        }
+
         // Locate the sheet-metal Flat-Pattern feature (always the last top-level feature in a sheet-metal
         // part, usually suppressed), or null for a non-sheet-metal part. Used to roll the bar before it so
         // new features insert ahead of it.
@@ -6118,7 +6435,7 @@ namespace SolidworksExecution.Services
                 object raw = modelDoc.GetMassProperties2(ref st);
                 double[] mp = raw as double[];
                 if (mp == null && raw is object[] oa) mp = Array.ConvertAll(oa, o => (double)o);
-                if (mp != null && mp.Length >= 4) s["volume"] = R6(mp[3]);
+                if (mp != null && mp.Length >= 4) s["volume"] = Math.Round(mp[3], 12);
                 var partDoc = modelDoc as IPartDoc;
                 if (partDoc != null)
                 {

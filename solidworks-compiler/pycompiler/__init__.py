@@ -12,7 +12,7 @@ Architectural rules (see solidworks-compiler/architecture.md + master-architectu
     with the lowering / resolver / validation logic untouched (IR-ADR-003).
 
 This is the experimental IR path. It coexists with the 26 low-level tools and does NOT change
-them. See logs-ir.md for the ledger (IR-ADR-NNN).
+them. Repository history records the design decisions that grew this vocabulary.
 """
 
 from .compiler import compile_and_run, CompileResult  # noqa: F401

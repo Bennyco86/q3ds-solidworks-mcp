@@ -1,73 +1,73 @@
-# Contributor License Agreement (CLA)
+# Contribution Terms for This Fork
 
-**Project:** SolidPilot / mcp-server-solidworks
-**Maintainer / Licensor:** Çağatay Bakan (cagataybkn@gmail.com)
+Despite this file's historical name, this fork does **not** require a Contributor License
+Agreement that permits proprietary or commercial relicensing. The filename is retained so existing
+links from the upstream project do not break.
 
-Thank you for contributing to SolidPilot. To keep the project's licensing clear
-and to preserve the maintainer's ability to offer SolidPilot under both the
-open-source [AGPL-3.0](LICENSE) **and** a separate commercial license, every
-contribution is accepted under the terms below.
+This repository is Benny Cohen's independently maintained AGPL-3.0 fork of
+[`eyfel/mcp-server-solidworks`](https://github.com/eyfel/mcp-server-solidworks), based on upstream
+commit `a7348f0`. The CLA that appeared in that upstream revision named Çağatay Bakan as its
+maintainer/licensor and supported the upstream project's dual-licensing model. That upstream CLA
+does not make the maintainer of this fork the licensor of upstream code, and it is not the
+contribution policy for pull requests submitted here.
 
-By submitting a contribution (a pull request, patch, or any other work) to this
-project, **You** agree to the following. "Contribution" means any original work
-of authorship that You intentionally submit for inclusion in the project.
+## License for contributions
 
-## 1. Copyright license
+Contributions intentionally submitted to this fork are accepted under the
+[GNU Affero General Public License v3.0](LICENSE), the same license under which the fork is
+distributed. Contributors retain their copyright. Submission is not a copyright assignment and
+does not grant the fork maintainer a separate right to relicense the contribution under proprietary
+terms.
 
-You grant the Maintainer and recipients of software distributed by the
-Maintainer a **perpetual, worldwide, non-exclusive, royalty-free, irrevocable**
-copyright license to reproduce, prepare derivative works of, publicly display,
-publicly perform, sublicense, and distribute Your Contribution and such
-derivative works.
+## Developer Certificate of Origin
 
-## 2. Right to re-license (dual licensing)
+Every commit must carry a `Signed-off-by` line certifying the Developer Certificate of Origin
+version 1.1 below.
 
-You expressly agree that the Maintainer **may license Your Contribution, and the
-project as a whole, under any terms** — including the AGPL-3.0, other
-open-source licenses, and **proprietary/commercial licenses**. This right is the
-core purpose of this CLA: it lets SolidPilot be offered commercially to
-organizations that cannot comply with the AGPL, while remaining free and open
-source for everyone else.
+```text
+Developer Certificate of Origin
+Version 1.1
 
-## 3. Patent license
+Copyright (C) 2004, 2006 The Linux Foundation and its contributors.
 
-You grant the Maintainer and recipients a perpetual, worldwide, non-exclusive,
-royalty-free, irrevocable patent license to make, use, sell, offer to sell,
-import, and otherwise transfer Your Contribution, for any patent claims
-necessarily infringed by Your Contribution alone or by its combination with the
-project.
+Everyone is permitted to copy and distribute verbatim copies of this
+license document, but changing it is not allowed.
 
-## 4. You are allowed to grant this
+Developer's Certificate of Origin 1.1
 
-You represent that each of Your Contributions is Your original creation and that
-You are legally entitled to grant the licenses above. If Your employer has
-rights to intellectual property You create, You represent that You have received
-permission to make the Contribution on behalf of that employer, or that Your
-employer has waived such rights.
+By making a contribution to this project, I certify that:
 
-## 5. No obligation
+(a) The contribution was created in whole or in part by me and I have the
+    right to submit it under the open source license indicated in the file; or
 
-You understand that the decision to include Your Contribution in any project or
-product is entirely at the Maintainer's discretion, and that this agreement does
-not obligate the Maintainer to use or distribute Your Contribution.
+(b) The contribution is based upon previous work that, to the best of my
+    knowledge, is covered under an appropriate open source license and I have
+    the right under that license to submit that work with modifications,
+    whether created in whole or in part by me, under the same open source
+    license (unless I am permitted to submit under a different license), as
+    indicated in the file; or
 
-## 6. Warranty disclaimer
+(c) The contribution was provided directly to me by some other person who
+    certified (a), (b) or (c) and I have not modified it.
 
-Unless required by applicable law or agreed in writing, You provide Your
-Contribution **"AS IS", without warranties or conditions of any kind**, either
-express or implied.
-
----
-
-## How to sign
-
-You accept this CLA by adding a `Signed-off-by` line to your commits, certifying
-the [Developer Certificate of Origin](https://developercertificate.org/) and
-agreement to the terms above:
-
+(d) I understand and agree that this project and the contribution are public
+    and that a record of the contribution (including all personal information
+    I submit with it, including my sign-off) is maintained indefinitely and
+    may be redistributed consistent with this project or the open source
+    license(s) involved.
 ```
+
+Sign off a commit with:
+
+```powershell
+git commit -s
+```
+
+This adds a line in the following form:
+
+```text
 Signed-off-by: Your Name <your.email@example.com>
 ```
 
-Add it automatically with `git commit -s`. By doing so for a contribution to
-this repository, You agree to this Contributor License Agreement.
+If a commit is missing the sign-off, amend it before the pull request is merged. Contributions sent
+to the upstream repository remain subject to the upstream repository's own contribution policy.

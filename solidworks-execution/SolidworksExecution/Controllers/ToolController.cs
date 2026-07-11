@@ -149,6 +149,8 @@ namespace SolidworksExecution.Controllers
                 case "open_document":          return _service.OpenDocument(request);
                 case "create_sketch":          return _service.CreateSketch(request);
                 case "add_sketch_entity":      return _service.AddSketchEntity(request);
+                case "add_sketch_text":        return _service.AddSketchText(request);
+                case "capture_view":           return _service.CaptureView(request);
                 case "add_dimension":          return _service.AddDimension(request);
                 case "add_sketch_constraint":  return _service.AddSketchConstraint(request);
                 case "add_edge_feature":       return _service.AddEdgeFeature(request);

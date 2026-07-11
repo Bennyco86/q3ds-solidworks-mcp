@@ -4,6 +4,10 @@ Thanks for contributing to SolidPilot. This document summarizes how to set up th
 
 SolidPilot is an AI-driven CAD automation system for SolidWorks that runs as an MCP server. For an overview, see [README.md](README.md).
 
+This repository is Benny Cohen's independently maintained AGPL-3.0 fork of
+`eyfel/mcp-server-solidworks`, based on upstream commit `a7348f0`. Contributions submitted here
+target this fork; they are not submissions to, or endorsements by, the upstream maintainer.
+
 ---
 
 ## Architecture and invariants
@@ -14,7 +18,7 @@ The system has four layers, and preserving these boundaries is the foundation of
 |---|---|---|
 | `cad-planner` | `cad-planner/` | Intent -> CAD-neutral Feature Graph IR. Does not touch COM, does not emit raw tool calls. |
 | `solidworks-compiler` | `solidworks-compiler/` | IR -> tool calls + reference resolution. Deterministic; contains no LLM and no MCP. |
-| `solidworks-execution` | `solidworks-execution/` | The only layer that touches SolidWorks COM (C#, .NET 4.8). |
+| `solidworks-execution` | `solidworks-execution/` | The only layer that touches SolidWorks COM (C#, .NET 4.8.1). |
 | `adapters/claude` | `adapters/claude/` | MCP protocol bridge (Python, FastMCP). |
 
 Rules that must never be violated:
@@ -31,9 +35,10 @@ Rules that must never be violated:
 ## Development environment
 
 ### Requirements
+
 - Windows and **SolidWorks 2026** (development happens against a local SolidWorks install).
-- **.NET Framework 4.8** and MSBuild (ships with Visual Studio 2022).
-- **Python 3.x** and **FastMCP** (for the MCP adapter).
+- **.NET Framework 4.8.1 Developer Pack** and MSBuild (available with Visual Studio 2022).
+- **Python 3.12** for the checked-in Windows lock files and CI parity.
 
 ### Building and running the execution layer
 
@@ -54,13 +59,31 @@ The server runs headless and must be running while SolidWorks is open (the COM c
 
 ### Running the adapter
 
-```
-cd adapters/claude
-pip install -r requirements.txt
-python server.py
+From the repository root:
+
+```powershell
+py -3.12 -m venv .venv
+& .\.venv\Scripts\python.exe -m pip install --require-hashes -r requirements-dev.lock
+Copy-Item adapters\claude\.env.example adapters\claude\.env
+& .\.venv\Scripts\python.exe .\adapters\claude\server.py
 ```
 
 **Important:** the Python MCP adapter does not hot-reload while running. When you change `server.py` (for example, adding a new parameter), the MCP server must be reconnected. Reconnecting also resets the adapter's local `state_version` to 0. (The C# execution server, by contrast, can be restarted.)
+
+### Dependency files
+
+- `requirements.txt` and `adapters/claude/requirements.txt` define runtime dependency ranges.
+- `adapters/claude/requirements-dev.txt` adds development and test dependencies.
+- `requirements.lock` and `requirements-dev.lock` are hash-pinned for Windows and Python 3.12.
+  End users should install `requirements.lock`; contributors and CI should install
+  `requirements-dev.lock` with `--require-hashes`.
+
+When a dependency range changes, regenerate and commit both applicable lock files with `uv`:
+
+```powershell
+uv pip compile requirements.txt --output-file requirements.lock --python-version 3.12 --python-platform windows --generate-hashes
+uv pip compile adapters\claude\requirements-dev.txt --output-file requirements-dev.lock --python-version 3.12 --python-platform windows --generate-hashes
+```
 
 ---
 
@@ -79,7 +102,10 @@ python server.py
 2. Add its lowering rule and any required reference resolution in `solidworks-compiler`.
 3. It reuses existing low-level tools; usually no new execution tool is needed.
 
-> **Experimental IR tool flag:** the IR entry point `submit_feature_graph` is an experimental **test tool**, gated behind an opt-in kill switch and **disabled by default**. To exercise the IR path, set `SOLIDPILOT_ENABLE_IR=true` in `adapters/claude/.env` (default `false`) and reconnect the adapter; while disabled it stays registered but refuses to run. See `logs-ir.md` (IR-ADR-001).
+> **Forward IR status:** the direct `submit_feature_graph` entry point is development scaffolding and
+> is currently commented out, so it is not part of the MCP surface. Exercise the supported compiler
+> path through `rebuild_from_ir`. Re-enabling the forward entry point requires a deliberate code and
+> contract change, followed by the normal contract and live SolidWorks checks.
 
 ---
 
@@ -96,59 +122,53 @@ python server.py
 
 ## Testing
 
-- **Contract test:** catches any tool or parameter drift between `server.py` and `tool-schemas.json`.
+- **Contract test:** catches any tool or parameter drift across the 39-tool adapter surface and
+  `tool-schemas.json`.
 
+  ```powershell
+  & .\.venv\Scripts\python.exe .\adapters\claude\tests\test_schema_contract.py
   ```
-  cd adapters/claude
-  python tests/test_schema_contract.py
+
+- **Offline compiler tests:**
+
+  ```powershell
+  & .\.venv\Scripts\python.exe .\solidworks-compiler\pycompiler\tests\test_compiler.py
   ```
 
-  or run it via `pytest`.
+- **Syntax check:**
 
-- **Live testing (manual by design):** tools are verified against live SolidWorks, with the GUI open, case by case. A cohesive batch of tools is chosen together and tested as a batch. When a tool fails, inspect `execution.log` and report the expected result, the API response, and a hypothesis. For drawing tools, the exported **PDF is the ground truth** — some interop counters under-report (e.g. inserted annotations / center marks), so confirm a drawing change by exporting and reading the PDF rather than trusting an in-band count alone.
+  ```powershell
+  & .\.venv\Scripts\python.exe -m compileall -q adapters\claude solidworks-compiler scripts
+  ```
 
-There is no behavioral/regression test suite yet; the contract test is the only automated test.
+The Windows GitHub Actions workflow in `.github/workflows/ci.yml` installs
+`requirements-dev.lock` with hash verification and runs all three offline checks for pushes to
+`main` and pull requests.
+
+- **Live testing (manual by design):** tools are verified against live SolidWorks, with the GUI open, case by case. A cohesive batch of tools is chosen together and tested as a batch. When a tool fails, inspect `execution.log` and report the expected result, the API response, and a hypothesis. For part-model changes, use `capture_view` for fast top/isometric/side visual checks. For drawing-only content, an exported PDF remains the ground truth because some interop counters under-report inserted annotations and center marks.
+
+Live SolidWorks behavior remains manually verified; the automated suite covers the MCP contract,
+the deterministic compiler, and Python source compilation without requiring a SolidWorks license.
 
 ---
 
-## Contributor License Agreement (CLA)
+## Contribution terms (AGPL-3.0 + DCO)
 
-SolidPilot is free and open source under the [GNU AGPL-3.0](LICENSE), while the
-project owner also offers a separate **commercial license** for organizations
-that cannot comply with the AGPL. For this dual-licensing model to work, every
-contribution must come with a clear grant of rights. The full terms live in
-**[CLA.md](CLA.md)**; the summary below restates them. **By submitting a
-contribution (a pull request, patch, or any other work) you agree to the
-following:**
+This fork does **not** ask contributors to grant proprietary relicensing rights. Contributions
+are accepted under the same [GNU AGPL-3.0](LICENSE) terms used for the fork, with a
+Developer Certificate of Origin (DCO) sign-off. This is an inbound-equals-outbound policy, not a
+copyright assignment.
 
-1. **You have the right to contribute it.** The contribution is your original work,
-   or you have the necessary rights to submit it, and submitting it does not violate
-   any third party's rights or any agreement you are bound by.
-2. **License and commercial-use grant.** You grant the project owner a perpetual,
-   worldwide, non-exclusive, royalty-free, irrevocable license to use, reproduce,
-   modify, distribute, sublicense, and **relicense** your contribution — including
-   for **commercial purposes** and as part of a paid or cloud edition — and to
-   include it in the project under the current license or any future license the
-   owner chooses.
-3. **You keep your copyright.** This is a license grant, not an assignment; you
-   retain ownership of your contribution and may use it elsewhere.
-4. **License adjustment.** You agree that the owner may make the project's license
-   more or less permissive as needed, and that your contribution may be distributed
-   under such adjusted terms.
-5. **As-is.** You provide your contribution without warranty of any kind.
+Sign every commit with:
 
-**How to accept:** sign off your commits with `git commit -s` (adds a
-`Signed-off-by` line, per [CLA.md](CLA.md)), or include the following line in
-your pull request description:
+```powershell
+git commit -s
+```
 
-> I have read and agree to the Contributor License Agreement in CLA.md.
-
-> **Note on significant contributions.** For small fixes, the pull-request
-> acknowledgment above is sufficient. For a substantial contribution, the owner may
-> ask you to also confirm the CLA via a signed document (a wet signature or a secure
-> electronic signature) — this makes the grant robust under Turkish copyright law
-> (FSEK Art. 52, which requires transfers/licenses of economic rights to be in
-> writing and signed). This is not a legal opinion; it is a practical safeguard.
+The resulting `Signed-off-by: Name <email>` line certifies that you have the right to submit the
+work under the project's license. The complete policy and DCO text are in [CLA.md](CLA.md). The
+filename is retained for compatibility with upstream links; this fork does not use the upstream
+commercial-relicensing CLA.
 
 ---
 
@@ -157,6 +177,6 @@ your pull request description:
 - Write meaningful, focused commits; do not mix several unrelated changes in one commit.
 - If you change the behavior of a tool or feature, keep the relevant contract and tests up to date.
 - In the Pull Request description, state what you changed, why, and how you verified it.
-- Include the CLA acknowledgment line (see [Contributor License Agreement](#contributor-license-agreement-cla) above).
+- Sign off every commit under the DCO (see [Contribution terms](#contribution-terms-agpl-30--dco)).
 
 For questions and discussions, feel free to open an issue.

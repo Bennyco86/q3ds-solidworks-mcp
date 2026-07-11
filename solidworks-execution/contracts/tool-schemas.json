@@ -63,6 +63,38 @@
         },
         "output": "→ see execution-response.json (add_sketch_entity additionally returns result_geometry: the real created segment geometry, read-only — does NOT affect state_version)"
     },
+    "add_sketch_text": {
+        "description": "Adds TrueType text to the ACTIVE sketch at an anchor expressed in sketch coordinates (meters). Text remains editable sketch geometry and can be consumed by extrude_feature as a multi-contour boss (raised lettering) or cut (engraving). Rotation is counter-clockwise in degrees. SolidWorks character width and spacing are fixed at 100% to preserve valid glyph contours. For text on an existing model surface, prefer a reference plane at the surface height: create_sketch(on_face=true) can include the face outline in the profile.",
+        "input": {
+            "operation_id": "string (required, unique idempotency key)",
+            "state_version": "integer (required, must match current execution state)",
+            "params": {
+                "text": "string (required, non-empty — text to insert)",
+                "x": "number (optional, default 0.0 — anchor X in sketch coordinates, meters)",
+                "y": "number (optional, default 0.0 — anchor Y in sketch coordinates, meters)",
+                "height": "number (optional, default 0.005 — character height in meters; must be greater than 0 at the MCP adapter)",
+                "rotation_deg": "number (optional, default 0.0 — counter-clockwise rotation about the anchor in degrees; 90 reads upward)",
+                "bold": "boolean (optional, default false — apply bold formatting)",
+                "italic": "boolean (optional, default false — apply italic formatting)",
+                "font": "string (optional, default empty — TrueType typeface name; empty preserves the SolidWorks default)"
+            }
+        },
+        "output": "→ see execution-response.json — increments state_version, keeps the sketch active, and returns result_geometry {kind:'text', text, x, y, height, rotation_deg} using the requested sketch-space values"
+    },
+    "capture_view": {
+        "description": "Captures the ACTIVE model window for fast visual verification. A named view is oriented and zoomed to fit before capture; view='current' preserves the current orientation without zooming. The execution layer writes BMP directly or converts its temporary BMP to PNG. This is read-only for tracked CAD state and does not increment state_version. The MCP adapter supplies a temporary PNG path when file_path is omitted and returns that file as an MCP Image.",
+        "input": {
+            "operation_id": "string (required, unique idempotency key)",
+            "state_version": "integer (required, current execution state; capture does not advance it)",
+            "params": {
+                "view": "string (optional, default 'isometric' — one of 'front', 'top', 'right', 'iso', 'isometric', 'back', 'bottom', 'left', 'dimetric', 'trimetric', or 'current')",
+                "width": "integer (optional, default 1024 — capture width in pixels; MCP adapter range 1..2000)",
+                "height": "integer (optional, default 680 — capture height in pixels; MCP adapter range 1..2000)",
+                "file_path": "string (optional at MCP surface — destination .png or .bmp path; adapter generates a unique temporary .png path when omitted; required by the execution layer)"
+            }
+        },
+        "output": "MCP adapter: image content loaded from file_path. Execution layer: → see execution-response.json with unchanged state_version and result_geometry {kind:'capture', path, view, width, height, bytes}."
+    },
     "add_sketch_constraint": {
         "description": "Applies a geometric constraint to sketch entities in the active sketch. Single-entity constraints (horizontal, vertical) need only px1/py1. Two-entity constraints (coincident, parallel, perpendicular, tangent, equal, midpoint) also require px2/py2. entity_type1/2 defaults to 'SKETCHSEGMENT'; use 'SKETCHPOINT' for point-based constraints.",
         "input": {

@@ -1,11 +1,14 @@
 import hashlib
 import json
 import os
+import tempfile
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Annotated, Literal, Optional
 from pydantic import Field
 from fastmcp import FastMCP
+from fastmcp.utilities.types import Image
 from execution_client import call_tool, get_state, ensure_ready as _ensure_ready, ExecutionLayerError
 from response_mapper import map_response
 # from ir_execution_port import run_feature_graph  # only used by the disabled test tool below
@@ -58,7 +61,7 @@ def _call(tool_name: str, params: dict) -> str:
         response = call_tool(
             tool_name, _next_operation_id(), _state_version, params)
     _update_state_version(response)
-    return map_response(response)
+    return map_response(response, tool_name=tool_name)
 
 
 # ---------------------------------------------------------------------------
@@ -83,14 +86,16 @@ def ensure_ready() -> str:
     sv = body.get("stateVersion")
     if sv is not None:
         _state_version = sv
-    return (
-        f"READY | server=UP | "
-        f"com_attached={body.get('comAttached')} | "
-        f"sw_launched={body.get('swLaunched')} | "
-        f"active_document={body.get('activeDocument')} | "
-        f"sw_version={body.get('swVersion')} | "
-        f"state_version={body.get('stateVersion')}"
-    )
+    return json.dumps({
+        "ok": True,
+        "status": "READY",
+        "server": "UP",
+        "com_attached": body.get("comAttached"),
+        "sw_launched": body.get("swLaunched"),
+        "active_document": body.get("activeDocument"),
+        "sw_version": body.get("swVersion"),
+        "state_version": body.get("stateVersion"),
+    }, separators=(",", ":"), ensure_ascii=False)
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +225,60 @@ def add_sketch_entity(
             "construction": construction,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Tool: add_sketch_text
+# ---------------------------------------------------------------------------
+@mcp.tool()
+def add_sketch_text(
+    text: str,
+    x: float = 0.0,
+    y: float = 0.0,
+    height: Annotated[float, Field(gt=0, description="Character height in METERS (0.0025 = 2.5mm)")] = 0.005,
+    rotation_deg: float = 0.0,
+    bold: bool = False,
+    italic: bool = False,
+    font: str = "",
+) -> str:
+    """Add TrueType text to the ACTIVE sketch (SolidWorks Sketch > Text).
+    x/y: anchor (text baseline start) in SKETCH coordinates, meters — same frame as
+    add_sketch_entity. rotation_deg rotates the text about its anchor (90 = reads upward).
+    After exiting, extrude_feature boss (raised lettering) or cut (engraving) consumes the
+    text contours — the boss path handles the many disjoint regions automatically.
+    Keep the anchor ON the target face area; the text box extends right/up from it.
+    For text on a model face: sketch on a REFERENCE PLANE at the surface height
+    (add_reference_geometry plane + offset), NOT create_sketch(on_face=True) — a face
+    sketch carries the face outline, and the boss extrudes that outline too."""
+    return _call("add_sketch_text", {
+        "text": text, "x": x, "y": y, "height": height,
+        "rotation_deg": rotation_deg, "bold": bold, "italic": italic, "font": font,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Tool: capture_view
+# ---------------------------------------------------------------------------
+@mcp.tool()
+def capture_view(
+    view: Literal["front", "top", "right", "iso", "isometric", "back",
+                  "bottom", "left", "dimetric", "trimetric", "current"] = "isometric",
+    width: Annotated[int, Field(gt=0, le=2000)] = 1024,
+    height: Annotated[int, Field(gt=0, le=2000)] = 680,
+    file_path: str = "",
+) -> Image:
+    """Screenshot the ACTIVE model: orient to a named view, zoom to fit, return the PNG
+    so you SEE the current geometry. THE fast visual check after mutations — use this
+    instead of building a throwaway drawing + PDF export. 'current' keeps the user's
+    orientation. file_path optional (defaults to a temp file)."""
+    if not file_path:
+        cap_dir = os.path.join(tempfile.gettempdir(), "solidpilot_captures")
+        os.makedirs(cap_dir, exist_ok=True)
+        file_path = os.path.join(cap_dir, f"{view}_{int(time.time()*1000)}.png")
+    _call("capture_view", {
+        "file_path": file_path, "view": view, "width": width, "height": height,
+    })
+    return Image(path=file_path)
 
 
 # ---------------------------------------------------------------------------
@@ -1405,7 +1464,7 @@ def compare_parts(doc_a: str, doc_b: str) -> str:
 # TEST TOOL (disabled): submit_feature_graph — Feature Graph IR + deterministic compiler
 # ---------------------------------------------------------------------------
 # The mainline IR path is the analysis pipeline's rebuild_from_ir (logs.md ADR-040, Phase A;
-# logs-ir.md IR-ADR-005). This direct-IR entry point is kept as a DEVELOPMENT/TEST tool only and is
+# This direct-IR entry point is kept as a DEVELOPMENT/TEST tool only and is
 # commented out so it never appears on the MCP surface (zero token cost). The old experimental
 # gates (SOLIDPILOT_ENABLE_IR env switch + i_understand_this_is_experimental param) were DELETED
 # (IR-ADR-005) — the block below is the simplified, gate-free version.

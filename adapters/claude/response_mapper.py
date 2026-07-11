@@ -1,48 +1,78 @@
-"""
-Maps solidworks-execution ExecutionResponse payloads to MCP tool result strings.
-
-COMPLETED → success text with state summary
-FAILED    → raises RuntimeError (fastmcp surfaces this as isError=True)
-DUPLICATE → success text noting idempotent result
-"""
+"""Map solidworks-execution responses to compact MCP result strings."""
 import json
 
 
-def map_response(response: dict) -> str:
-    """
-    Convert an ExecutionResponse dict into a MCP-compatible result string.
+def _compact_json(payload: dict) -> str:
+    return json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
 
-    Raises RuntimeError for FAILED responses so fastmcp marks the call as an error.
-    """
+
+def _parse_payload_item(item):
+    if not isinstance(item, str):
+        return item
+    stripped = item.strip()
+    if not stripped or stripped[0] not in "{[":
+        return item
+    try:
+        return json.loads(stripped)
+    except Exception:
+        return item
+
+
+def _features_payload(features, unwrap_single: bool = False):
+    if not features:
+        return None
+    parsed = [_parse_payload_item(item) for item in features]
+    if unwrap_single and len(parsed) == 1:
+        return parsed[0]
+    return parsed
+
+
+def map_response(response: dict, tool_name: str = "") -> str:
+    """Convert an ExecutionResponse dict into a compact MCP-compatible string."""
     status = response.get("status")
 
     if status == "COMPLETED":
         state = response.get("cadState") or {}
-        text = (
-            f"COMPLETED | state_version={response.get('stateVersion')} | "
-            f"document={state.get('activeDocument')} | "
-            f"sketch={state.get('activeSketch')} | "
-            f"features={state.get('features', [])}"
-        )
-        # In-band echo of the REAL geometry a create tool just produced (read back from SW,
-        # not the input) so the host can self-verify without a separate analyze round-trip.
-        # Read-only — does not affect state_version. Only present on tools that populate it.
+        payload = {
+            "ok": True,
+            "status": "COMPLETED",
+            "tool": tool_name or None,
+            "state_version": response.get("stateVersion"),
+            "document": state.get("activeDocument"),
+        }
+        if state.get("activeSketch") is not None:
+            payload["sketch"] = state.get("activeSketch")
+
+        is_read_payload = tool_name.startswith("analyze_") or tool_name in {"get_selection", "verify_state"}
+        features = _features_payload(state.get("features") or [], unwrap_single=is_read_payload)
+        if features is not None:
+            if is_read_payload:
+                payload["data"] = features
+            else:
+                payload["features"] = features
+
         result_geometry = response.get("result_geometry")
         if result_geometry is not None:
-            text += f" | result_geometry={json.dumps(result_geometry)}"
-        return text
+            payload["result_geometry"] = result_geometry
+
+        return _compact_json({k: v for k, v in payload.items() if v is not None})
 
     if status == "DUPLICATE":
-        return (
-            f"DUPLICATE | operation already executed | "
-            f"last_known_state_version={response.get('last_known_state_version')}"
-        )
+        return _compact_json({
+            "ok": True,
+            "status": "DUPLICATE",
+            "tool": tool_name or None,
+            "last_known_state_version": response.get("last_known_state_version"),
+        })
 
     if status == "FAILED":
         error = response.get("error") or {}
-        raise RuntimeError(
-            f"CAD operation failed | code={error.get('code')} | "
-            f"message={error.get('message')}"
-        )
+        raise RuntimeError(_compact_json({
+            "ok": False,
+            "status": "FAILED",
+            "tool": tool_name or None,
+            "code": error.get("code"),
+            "message": error.get("message"),
+        }))
 
     raise RuntimeError(f"Unknown execution response status: {status}")
