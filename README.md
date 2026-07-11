@@ -21,10 +21,12 @@ SolidPilot is **not** a Claude-only plugin; it is **a general bridge between Sol
 
 ## Fork additions
 
-The fork currently exposes **39 MCP tools**. Its first improvement pass adds native sketch text,
-native model screenshots, compact JSON tool responses, multi-region boss recovery, higher volume
-precision for small geometry, and clearer extrusion diagnostics. See [CHANGELOG.md](CHANGELOG.md)
-for the release-level history.
+The fork currently exposes **47 MCP tools**. Its improvement passes add native sketch text,
+single- and multi-view model screenshots, compact JSON responses, batched execution, compact
+model inspection, revolved cuts, persistent HTTP connections, multi-region boss recovery, higher
+volume precision, clearer diagnostics, and a first native assembly slice (insert components,
+coincident/concentric/distance mates via persistent face references, read-only assembly
+analysis). See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ---
 
@@ -48,7 +50,7 @@ flowchart TD
     U(["User + AI client<br/>Claude · OpenClaw · OpenAI · local LLM"])
 
     subgraph ADAPT["adapters/* — MCP bridge · MCP BOUNDARY = top"]
-        LOW["39 MCP tools<br/>sketch · extrude · sheet-metal · drawing · analyze · capture"]
+        LOW["47 MCP tools<br/>sketch · features · assembly · batch · inspect · drawing · capture"]
         RIR["rebuild_from_ir · save_analysis · compare_parts"]
         SFG["submit_feature_graph<br/>forward single tool"]
     end
@@ -82,7 +84,7 @@ flowchart TD
     SFG -. "REST" .-> CO
 ```
 
-Read the diagram by line style: a **thick line works today**, a **dashed line is planned**. Two MCP doors are live — the 39-tool MCP surface (the primary path today), and **`rebuild_from_ir`**, which drives the **real** deterministic compiler to reproduce a part from its Feature Graph IR. The dotted reverse arrow is the discovery step: `analyze_model`/`analyze_drawing` read an existing part so an IR can be proposed for it. The only dashed (still-planned) piece is the *forward* collapse — a single `submit_feature_graph` tool that would replace the low-level surface for building from scratch; it runs through the same compiler.
+Read the diagram by line style: a **thick line works today**, a **dashed line is planned**. Two MCP doors are live — the 43-tool MCP surface (the primary path today), and **`rebuild_from_ir`**, which drives the **real** deterministic compiler to reproduce a part from its Feature Graph IR. The dotted reverse arrow is the discovery step: `analyze_model`/`analyze_drawing` read an existing part so an IR can be proposed for it. The only dashed (still-planned) piece is the *forward* collapse — a single `submit_feature_graph` tool that would replace the low-level surface for building from scratch; it runs through the same compiler.
 
 The system has four layers:
 
@@ -103,7 +105,7 @@ The `adapters/` layer is provider-specific and replaceable. Because the executio
 
 ## Tool List
 
-The system currently exposes **39 tools**; a contract test keeps the adapter and the execution contract in exact sync (see [CONTRIBUTING.md](CONTRIBUTING.md)). Most are low-level CAD operations; a few (`save_analysis`, `rebuild_from_ir`, `compare_parts`) drive the analysis / IR round-trip described below. All lengths are in meters (SolidWorks internal units).
+The system currently exposes **43 tools**; a contract test keeps the adapter and execution contract in exact sync (see [CONTRIBUTING.md](CONTRIBUTING.md)). Low-level operations remain available, while `execute_batch` and `inspect_model` reduce round trips for normal agent workflows. All lengths are in meters (SolidWorks internal units).
 
 ### Document and lifecycle
 - `ensure_ready` — launches SolidWorks via COM and attaches if it is closed (does not open a document).
@@ -122,7 +124,7 @@ The system currently exposes **39 tools**; a contract test keeps the adapter and
 - `add_dimension` — adds a dimension to the sketch.
 
 ### Feature and solid modeling
-- `extrude_feature` — boss, cut, revolve, sweep, loft.
+- `extrude_feature` — boss, cut, revolve, **revolve_cut**, sweep, loft.
 - `add_edge_feature` — fillet or chamfer on a solid edge (chamfer: distance-angle at any angle, or distance-distance).
 - `create_rib` — rib feature from an open sketch profile.
 - `add_reference_geometry` — reference plane, axis, or point.
@@ -139,8 +141,14 @@ The system currently exposes **39 tools**; a contract test keeps the adapter and
 ### Analysis and query
 - `analyze_model` — `geometry`, `mass_properties`, `features` (a compact feature-level recipe), `edges`, `faces`, `sketch` (one sketch's exact segments on demand), and `feature_map` (per-feature consumed/created topology — the source of the reference-resolver anchors) modes.
 - `capture_view` — orients the active model to a named view, zooms to fit, and returns a PNG directly as MCP image content; an optional path also saves the image to disk.
+- `capture_view_set` — returns one labelled PNG montage containing up to four synchronized named views.
+- `inspect_model` — returns compact topology, mass, optional feature summary, and an optional multi-view montage in one call.
 - `get_selection` — reads the geometry the user selected in the SolidWorks GUI and maps it to the analyze index.
 - `verify_state` — returns the current state and feature tree.
+
+### Agent efficiency
+- `execute_batch` — runs up to 100 ordered low-level operations in one MCP call; exact references such as `$last.features.0` reuse earlier results.
+- `solidworks_help` — returns detailed workflow guidance only when requested, keeping the always-loaded tool schema substantially smaller.
 
 ### Analysis pipeline & IR round-trip
 These tools implement the reverse-engineering loop — *"the LLM proposes, the round-trip decides"* — that reproduces an existing part from a CAD-neutral Feature Graph IR and objectively verifies the result.
@@ -165,6 +173,38 @@ The drawing tools were added after the initial part-modeling set and are now a s
 ### Export
 - `export_document` — STEP, IGES, STL, **PDF, DWG, DXF** (PDF/DWG/DXF require a drawing document).
 - `batch_export` — batch export.
+
+---
+
+## Fast screenshot-driven workflow
+
+For a part described by photographs or screenshots:
+
+1. Extract explicit dimensions, symmetry, repeated-feature counts, datums, and silhouettes. If no
+   scale is visible, state a concept scale instead of implying an exact copy.
+2. Build the master body and primary datums first. Use `execute_batch` for dense sketch/entity
+   sequences that do not require visual judgment between calls.
+3. After each major feature, call `inspect_model`. Its compact topology/mass summary and labelled
+   top/isometric/right/front montage make planform, height, taper, and junction errors visible at once.
+4. Correct the modelling cause, then inspect again. Finish by checking body count, open holes,
+   pattern instances, feature names, and mass properties.
+
+Detailed instructions stay out of the always-loaded schema and are available through
+`solidworks_help(topic="visual_assignment")` or the other help topics.
+
+Example batch payload:
+
+```json
+{
+  "operations": [
+    {"tool": "create_sketch", "params": {"plane": "Top Plane"}},
+    {"tool": "add_sketch_entity", "params": {
+      "entity_type": "rectangle", "x1": 0, "y1": 0, "x2": 0.04, "y2": 0.02
+    }},
+    {"tool": "extrude_feature", "params": {"feature_type": "boss", "depth": 0.01}}
+  ]
+}
+```
 
 ---
 
@@ -268,7 +308,7 @@ args = ['C:\src\solidpilot\adapters\claude\server.py']
 EXECUTION_BASE_URL = 'http://localhost:5000'
 ```
 
-Start a new Codex task after changing MCP configuration so the 39-tool surface is discovered.
+Start a new Codex task after changing MCP configuration so the 43-tool surface is discovered.
 
 ### Other MCP clients
 
@@ -301,7 +341,7 @@ The open problem — and the project's real research risk — is a **durable ref
 
 > **Two IR doors, one compiler.** The mainline door is `rebuild_from_ir` (reproduce from an artifact). A second, *forward* door — `submit_feature_graph`, building from scratch — is scaffolded but intentionally **commented out** in `adapters/claude/server.py` (it collapses the low-level surface into one tool, which is future work); re-enabling it is a one-block uncomment. Both doors execute through the same `pycompiler`, so every replay lesson improves both at once.
 
-**Testing:** Windows CI installs `requirements-dev.lock` with hash verification, checks the 39-tool
+**Testing:** Windows CI installs `requirements-dev.lock` with hash verification, checks the 43-tool
 adapter/execution contract, runs the offline compiler tests, and compiles the Python sources.
 Behavioral verification against live SolidWorks remains manual by design.
 

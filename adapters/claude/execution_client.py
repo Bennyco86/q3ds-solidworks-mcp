@@ -2,6 +2,7 @@ import os
 import subprocess
 import threading
 import time
+import atexit
 import httpx
 from config import (
     EXECUTE_ENDPOINT,
@@ -25,12 +26,30 @@ class ExecutionLayerError(Exception):
 # spawn a duplicate exe.
 _spawn_lock = threading.Lock()
 
+# Reuse localhost HTTP connections across tool calls. Creating a new client for
+# every sketch entity and analysis added avoidable setup overhead to long builds.
+_client = httpx.Client(
+    timeout=HTTP_TIMEOUT,
+    limits=httpx.Limits(max_connections=8, max_keepalive_connections=4),
+)
+_ensure_client = httpx.Client(
+    timeout=ENSURE_TIMEOUT,
+    limits=httpx.Limits(max_connections=2, max_keepalive_connections=1),
+)
+
+
+def _close_clients() -> None:
+    _client.close()
+    _ensure_client.close()
+
+
+atexit.register(_close_clients)
+
 
 def _server_is_up() -> bool:
     """Cheap liveness probe — True if /health answers 200."""
     try:
-        with httpx.Client(timeout=2.0) as client:
-            return client.get(HEALTH_ENDPOINT).status_code == 200
+        return _client.get(HEALTH_ENDPOINT, timeout=2.0).status_code == 200
     except Exception:
         return False
 
@@ -103,8 +122,7 @@ def _request_with_autostart(do_request, label: str):
 def get_health() -> dict:
     """GET /health — server status + COM attach state (does not touch state_version)."""
     try:
-        with httpx.Client(timeout=HTTP_TIMEOUT) as client:
-            response = client.get(HEALTH_ENDPOINT)
+        response = _client.get(HEALTH_ENDPOINT)
     except httpx.ConnectError:
         _log("<- health CONNECT_ERROR (server down?)")
         raise ExecutionLayerError(
@@ -130,8 +148,7 @@ def get_state() -> int:
     _log("-> get_state (resync)")
 
     def _do():
-        with httpx.Client(timeout=HTTP_TIMEOUT) as client:
-            return client.get(STATE_ENDPOINT)
+        return _client.get(STATE_ENDPOINT)
 
     try:
         response = _request_with_autostart(_do, "get_state")
@@ -168,8 +185,7 @@ def call_tool(tool_name: str, operation_id: str, state_version: int, params: dic
     _log(f"-> {tool_name} op={operation_id} sv={state_version}")
 
     def _do():
-        with httpx.Client(timeout=HTTP_TIMEOUT) as client:
-            return client.post(EXECUTE_ENDPOINT, json=payload)
+        return _client.post(EXECUTE_ENDPOINT, json=payload)
 
     try:
         response = _request_with_autostart(_do, tool_name)
@@ -210,8 +226,7 @@ def ensure_ready() -> dict:
         _ensure_server_up()
 
     def _do():
-        with httpx.Client(timeout=ENSURE_TIMEOUT) as client:
-            return client.post(ENSURE_ENDPOINT)
+        return _ensure_client.post(ENSURE_ENDPOINT)
 
     try:
         response = _request_with_autostart(_do, "ensure_ready")

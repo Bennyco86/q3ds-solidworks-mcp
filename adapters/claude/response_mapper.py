@@ -39,6 +39,7 @@ def map_response(response: dict, tool_name: str = "") -> str:
             "tool": tool_name or None,
             "state_version": response.get("stateVersion"),
             "document": state.get("activeDocument"),
+            "document_type": state.get("documentType"),
         }
         if state.get("activeSketch") is not None:
             payload["sketch"] = state.get("activeSketch")

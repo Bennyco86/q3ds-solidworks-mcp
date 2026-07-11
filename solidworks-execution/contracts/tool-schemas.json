@@ -21,6 +21,68 @@
         },
         "output": "→ see execution-response.json — CadState.ActiveDocument = opened doc title; DocumentType = PART/ASSEMBLY/DRAWING; Features[0] = file name"
     },
+    "open_new_assembly": {
+        "description": "Opens a new assembly document in SolidWorks (default assembly template unless template_path is given). Establishes the active-assembly context for insert_component / add_assembly_mate / analyze_assembly.",
+        "input": {
+            "operation_id": "string (required, unique idempotency key)",
+            "state_version": "integer (required, must match current execution state)",
+            "params": {
+                "template_path": "string (optional — full path to an .asmdot assembly template)"
+            }
+        },
+        "output": "→ see execution-response.json — DocumentType = ASSEMBLY"
+    },
+    "insert_component": {
+        "description": "Inserts a SAVED part/assembly file into the ACTIVE assembly via IAssemblyDoc.AddComponent5. x/y/z is APPROXIMATE placement (bounding-box centre, not the component origin) — position exactly with mates. Renaming happens while the component is SELECTED and is verified (RENAME_FAILED explains the swExtRefUpdateCompNames blocker). The requested configuration is set explicitly on the component and verified after rebuild. fixed omitted = SolidWorks default preserved (first component auto-fixed); explicit true/false forces fix/unfix.",
+        "input": {
+            "operation_id": "string (required, unique idempotency key)",
+            "state_version": "integer (required, must match current execution state)",
+            "params": {
+                "file_path": "string (required — full path to the .sldprt/.sldasm to insert; must be saved to disk)",
+                "x": "number (optional, default 0 — approximate X placement, meters)",
+                "y": "number (optional, default 0 — approximate Y placement, meters)",
+                "z": "number (optional, default 0 — approximate Z placement, meters)",
+                "configuration": "string (optional — referenced configuration name; set explicitly and verified)",
+                "fixed": "boolean (optional — OMIT to preserve SolidWorks' default grounding; true = fix, false = unfix, both verified)",
+                "name": "string (optional — instance rename, applied while selected and verified)"
+            }
+        },
+        "output": "→ see execution-response.json — result_geometry: {kind:component, name, path, configuration, configuration_applied, fixed, position[3], position_note}"
+    },
+    "add_assembly_mate": {
+        "description": "Mates two faces in the ACTIVE assembly via the selection-free IAssemblyDoc.CreateMateData/CreateMate path (first slice: coincident, concentric, distance). Faces are identified by persistent references (face_ref1/face_ref2 from analyze_assembly include_faces=true — PREFERRED, survive rebuilds; persist states 0=ok 1=invalid 2=suppressed 4=deleted) or componentN + same-call face_indexN (top-level components only; nested names rejected). A lightweight component involved via the index path is resolved individually — never the whole assembly.",
+        "input": {
+            "operation_id": "string (required, unique idempotency key)",
+            "state_version": "integer (required, must match current execution state)",
+            "params": {
+                "mate_type": "string (optional, default coincident — coincident | concentric | distance)",
+                "face_ref1": "string (preferred — Base64 persistent face reference from analyze_assembly)",
+                "face_ref2": "string (preferred — Base64 persistent face reference from analyze_assembly)",
+                "component1": "string (fallback — top-level component Name2, with face_index1)",
+                "face_index1": "integer (fallback — same-call face index from analyze_assembly include_faces)",
+                "component2": "string (fallback — top-level component Name2, with face_index2)",
+                "face_index2": "integer (fallback — same-call face index from analyze_assembly include_faces)",
+                "alignment": "string (optional, default closest — aligned | anti_aligned | closest)",
+                "distance": "number (optional — distance mates, meters)",
+                "flip_dimension": "boolean (optional, default false — distance mates)",
+                "lock_rotation": "boolean (optional, default false — concentric mates)"
+            }
+        },
+        "output": "→ see execution-response.json — result_geometry: {kind:mate, feature, mate_type, alignment, component1, component2, distance?, lock_rotation}"
+    },
+    "analyze_assembly": {
+        "description": "READ-ONLY assembly structure report. Never resolves lightweight components (no ResolveAllLightWeightComponents) — unresolved components report suppression status + faces_unavailable. Components: name/path/configuration/suppression/fixed/position. include_faces=true adds each RESOLVED component's faces (index, planar, normal, point, area) plus a Base64 persistent `ref` — the cross-call identity for add_assembly_mate (indices are only stable within the same call). Mates come from walking the MateGroup subfeatures: feature name, type, alignment, suppression, dimension value (D1) when applicable, and referenced components/entities.",
+        "input": {
+            "operation_id": "string (required, unique idempotency key)",
+            "state_version": "integer (required, must match current execution state)",
+            "params": {
+                "include_faces": "boolean (optional, default false — per-face data + persistent refs, 200-face cap per component)",
+                "include_mates": "boolean (optional, default true)",
+                "top_level_only": "boolean (optional, default true)"
+            }
+        },
+        "output": "→ see execution-response.json — Features[0] = JSON {component_count, components[], mate_count, mates[]}; does NOT bump state_version"
+    },
     "create_sketch": {
         "description": "Creates a new sketch on a plane OR on an existing model face. Default: plane name. With on_face=true, select the face by face_index (PREFERRED — the i-th face from analyze_model(faces); robust on revolve end-caps where a coordinate pick is ambiguous) or by a point (face_x,face_y,face_z) on the planar face. Enables sketching on existing geometry (e.g. a recess/hub on a part face, a bore on a shaft end). Auto-exits any active sketch first.",
         "input": {
@@ -95,6 +157,20 @@
         },
         "output": "MCP adapter: image content loaded from file_path. Execution layer: → see execution-response.json with unchanged state_version and result_geometry {kind:'capture', path, view, width, height, bytes}."
     },
+    "capture_view_set": {
+        "description": "Captures 1-4 named model views and combines them into one labelled PNG montage for token-efficient visual verification. Read-only for CAD state.",
+        "input": {
+            "operation_id": "string (required, unique idempotency key)",
+            "state_version": "integer (required, current execution state; capture does not advance it)",
+            "params": {
+                "views": "string at MCP surface (comma-separated); execution receives an array of 1-4 named views",
+                "tile_width": "integer (optional, default 512; 160..1000 pixels per tile)",
+                "tile_height": "integer (optional, default 360; 120..800 pixels per tile)",
+                "file_path": "string (optional at MCP surface; adapter generates a temporary PNG path)"
+            }
+        },
+        "output": "MCP Image. Execution result_geometry: {kind:'capture_set', path, views, tile_width, tile_height, width, height, bytes}."
+    },
     "add_sketch_constraint": {
         "description": "Applies a geometric constraint to sketch entities in the active sketch. Single-entity constraints (horizontal, vertical) need only px1/py1. Two-entity constraints (coincident, parallel, perpendicular, tangent, equal, midpoint) also require px2/py2. entity_type1/2 defaults to 'SKETCHSEGMENT'; use 'SKETCHPOINT' for point-based constraints.",
         "input": {
@@ -128,18 +204,18 @@
         "output": "→ see execution-response.json"
     },
     "extrude_feature": {
-        "description": "Creates a 3D feature from the active sketch profile. Exits sketch mode automatically. feature_type discriminator: 'boss' (solid extrusion, default), 'cut' (material removal, requires existing solid body), 'revolve' (solid of revolution — requires angle and axis coords), 'sweep' (swept solid — requires path_sketch name), 'loft' (lofted solid — requires profiles JSON array of ≥2 sketch names).",
+        "description": "Creates a 3D feature from the active sketch profile. Exits sketch mode automatically. feature_type discriminator: 'boss', 'cut', 'revolve', 'revolve_cut', 'sweep', or 'loft'.",
         "input": {
             "operation_id": "string (required, unique idempotency key)",
             "state_version": "integer (required, must match current execution state)",
             "params": {
                 "depth": "number (required for boss/cut — extrusion/cut depth in document units)",
-                "feature_type": "string (optional, default 'boss': 'boss' | 'cut' | 'revolve' | 'sweep' | 'loft')",
-                "angle": "number (revolve only — revolution angle in DEGREES, default 360 = full revolve)",
-                "axis_x1": "number (revolve only — X of first endpoint of centerline segment)",
-                "axis_y1": "number (revolve only — Y of first endpoint of centerline segment)",
-                "axis_x2": "number (revolve only — X of second endpoint of centerline segment)",
-                "axis_y2": "number (revolve only — Y of second endpoint of centerline segment; default 0.001)",
+                "feature_type": "string (optional, default 'boss': 'boss' | 'cut' | 'revolve' | 'revolve_cut' | 'sweep' | 'loft')",
+                "angle": "number (revolve/revolve_cut — revolution angle in DEGREES, default 360 = full revolve)",
+                "axis_x1": "number (revolve/revolve_cut — X of first endpoint of centerline segment)",
+                "axis_y1": "number (revolve/revolve_cut — Y of first endpoint of centerline segment)",
+                "axis_x2": "number (revolve/revolve_cut — X of second endpoint of centerline segment)",
+                "axis_y2": "number (revolve/revolve_cut — Y of second endpoint of centerline segment; default 0.001)",
                 "path_sketch": "string (sweep only — name of the sketch containing the sweep path)",
                 "profiles": "string (loft only — JSON array of sketch names e.g. '[\"Sketch1\",\"Sketch2\"]', minimum 2)",
                 "reverse": "boolean (boss/cut — flip feature direction; needed for a cut/boss sketched on a part face where material is on the opposite side)",
@@ -564,5 +640,44 @@
             }
         },
         "output": "One-line report: verified_criteria PASS/FAIL | topology A/B (EXACT|DIFFER) | volume A/B + dV% | area A/B + dA% | cg_distance."
+    },
+    "execute_batch": {
+        "description": "ADAPTER-ONLY orchestration: executes up to 100 ordered execution-layer operations in one MCP call, with optional references to earlier results.",
+        "input": {
+            "operation_id": "n/a at adapter level",
+            "state_version": "threaded across underlying calls",
+            "params": {
+                "operations": "array of {tool:string, params:object}; exact refs such as $last.features.0 are resolved",
+                "stop_on_error": "boolean (optional, default true)",
+                "response_mode": "string (optional: summary or full; default summary)"
+            }
+        },
+        "output": "Compact JSON with requested/completed counts and ordered per-operation results."
+    },
+    "inspect_model": {
+        "description": "ADAPTER-ONLY orchestration: returns compact topology, mass, optional feature summary, and an optional labelled multi-view montage.",
+        "input": {
+            "operation_id": "n/a at adapter level",
+            "state_version": "read-only underlying calls",
+            "params": {
+                "include_features": "boolean (optional, default true)",
+                "include_visual": "boolean (optional, default true)",
+                "views": "string (optional, comma-separated 1-4 views)",
+                "tile_width": "integer (optional, default 512; 160..1000)",
+                "tile_height": "integer (optional, default 360; 120..800)"
+            }
+        },
+        "output": "Text content containing compact JSON plus an MCP Image when include_visual=true."
+    },
+    "solidworks_help": {
+        "description": "ADAPTER-ONLY on-demand workflow guidance, used to keep always-loaded tool descriptions compact.",
+        "input": {
+            "operation_id": "n/a",
+            "state_version": "n/a",
+            "params": {
+                "topic": "string: visual_assignment, batch, sketch, features, sheet_metal, or drawings"
+            }
+        },
+        "output": "Concise topic guidance string."
     }
 }

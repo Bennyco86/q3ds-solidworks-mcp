@@ -146,11 +146,16 @@ namespace SolidworksExecution.Controllers
             switch (request.Tool)
             {
                 case "open_new_part":          return _service.OpenNewPart(request);
+                case "open_new_assembly":      return _service.OpenNewAssembly(request);
                 case "open_document":          return _service.OpenDocument(request);
+                case "insert_component":       return _service.InsertComponent(request);
+                case "add_assembly_mate":      return _service.AddAssemblyMate(request);
+                case "analyze_assembly":       return _service.AnalyzeAssembly(request);
                 case "create_sketch":          return _service.CreateSketch(request);
                 case "add_sketch_entity":      return _service.AddSketchEntity(request);
                 case "add_sketch_text":        return _service.AddSketchText(request);
                 case "capture_view":           return _service.CaptureView(request);
+                case "capture_view_set":       return _service.CaptureViewSet(request);
                 case "add_dimension":          return _service.AddDimension(request);
                 case "add_sketch_constraint":  return _service.AddSketchConstraint(request);
                 case "add_edge_feature":       return _service.AddEdgeFeature(request);

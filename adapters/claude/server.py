@@ -9,6 +9,7 @@ from typing import Annotated, Literal, Optional
 from pydantic import Field
 from fastmcp import FastMCP
 from fastmcp.utilities.types import Image
+from mcp.types import TextContent
 from execution_client import call_tool, get_state, ensure_ready as _ensure_ready, ExecutionLayerError
 from response_mapper import map_response
 # from ir_execution_port import run_feature_graph  # only used by the disabled test tool below
@@ -127,9 +128,88 @@ def open_document(file_path: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Tool: create_sketch
+# Assembly tools (first slice: insert + coincident/concentric/distance mates)
 # ---------------------------------------------------------------------------
 @mcp.tool()
+def open_new_assembly(template_path: str = "") -> str:
+    """Open a new SolidWorks assembly document (default assembly template unless given)."""
+    params = {}
+    if template_path:
+        params["template_path"] = template_path
+    return _call("open_new_assembly", params)
+
+
+@mcp.tool()
+def insert_component(
+    file_path: str,
+    x: float = 0.0,
+    y: float = 0.0,
+    z: float = 0.0,
+    configuration: str = "",
+    fixed: Optional[bool] = None,
+    name: str = "",
+) -> str:
+    """Insert a SAVED part/assembly file into the ACTIVE assembly. x/y/z (meters) is
+    APPROXIMATE placement (bounding-box centre) — position exactly with mates.
+    fixed: omit to keep SolidWorks' default (first component auto-fixed); explicit
+    true/false forces fix/unfix. name renames the instance (verified; fails clearly
+    if the SolidWorks external-references option blocks renaming)."""
+    params = {"file_path": file_path, "x": x, "y": y, "z": z,
+              "configuration": configuration, "name": name}
+    if fixed is not None:
+        params["fixed"] = fixed
+    return _call("insert_component", params)
+
+
+@mcp.tool()
+def analyze_assembly(
+    include_faces: bool = False,
+    include_mates: bool = True,
+    top_level_only: bool = True,
+) -> str:
+    """READ-ONLY assembly structure: components (name/configuration/suppression/fixed/
+    position) and mates (feature name/type/alignment/entities). include_faces=true adds
+    each RESOLVED component's faces with persistent `ref` handles — the cross-call face
+    identity for add_assembly_mate (indices are only valid same-call). Lightweight/
+    suppressed components report faces_unavailable instead of being force-resolved."""
+    return _call("analyze_assembly", {
+        "include_faces": include_faces, "include_mates": include_mates,
+        "top_level_only": top_level_only,
+    })
+
+
+@mcp.tool()
+def add_assembly_mate(
+    mate_type: Literal["coincident", "concentric", "distance"] = "coincident",
+    face_ref1: str = "",
+    face_ref2: str = "",
+    component1: str = "",
+    face_index1: int = -1,
+    component2: str = "",
+    face_index2: int = -1,
+    alignment: Literal["aligned", "anti_aligned", "closest"] = "closest",
+    distance: Annotated[float, Field(ge=0, description="Distance in METERS (distance mates)")] = 0.0,
+    flip_dimension: bool = False,
+    lock_rotation: bool = False,
+) -> str:
+    """Mate two faces in the ACTIVE assembly (top-level components only). Identify each
+    face by its persistent `ref` from analyze_assembly(include_faces=true) — PREFERRED,
+    survives rebuilds — or by componentN + face_indexN from the SAME analyze call.
+    coincident/distance want planar faces; concentric wants cylindrical/conical."""
+    return _call("add_assembly_mate", {
+        "mate_type": mate_type,
+        "face_ref1": face_ref1, "face_ref2": face_ref2,
+        "component1": component1, "face_index1": face_index1,
+        "component2": component2, "face_index2": face_index2,
+        "alignment": alignment, "distance": distance,
+        "flip_dimension": flip_dimension, "lock_rotation": lock_rotation,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Tool: create_sketch
+# ---------------------------------------------------------------------------
+@mcp.tool(description="Create a sketch on a named plane or planar model face. Prefer face_index from analyze_model('faces') for face selection. Returns the active sketch name and measured frame.")
 def create_sketch(
     plane: str = "",
     on_face: bool = False,
@@ -157,7 +237,7 @@ def create_sketch(
 # ---------------------------------------------------------------------------
 # Tool: add_sketch_entity
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(description="Add a rectangle, circle, line, arc, ellipse, spline, fillet, or chamfer to the active sketch. Coordinates are meters in the current sketch frame; result_geometry reads back what SolidWorks created. See solidworks_help('sketch') for workflow guidance.")
 def add_sketch_entity(
     entity_type: Literal["rectangle", "circle", "line", "arc", "arc_center", "ellipse", "spline", "fillet", "chamfer"],
     x1: float = 0.0,
@@ -230,7 +310,7 @@ def add_sketch_entity(
 # ---------------------------------------------------------------------------
 # Tool: add_sketch_text
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(description="Add formatted TrueType text to the active sketch. Position and height use sketch meters; rotation is degrees. Extrude afterward for raised or engraved text.")
 def add_sketch_text(
     text: str,
     x: float = 0.0,
@@ -281,10 +361,35 @@ def capture_view(
     return Image(path=file_path)
 
 
+@mcp.tool()
+def capture_view_set(
+    views: str = "top,isometric,right,front",
+    tile_width: Annotated[int, Field(ge=160, le=1000)] = 512,
+    tile_height: Annotated[int, Field(ge=120, le=800)] = 360,
+    file_path: str = "",
+) -> Image:
+    """Return one labelled PNG montage of 1-4 named views. Use this instead of
+    four capture_view calls when checking shape, proportions, and screenshot-driven work."""
+    parsed_views = [item.strip().lower() for item in views.split(",") if item.strip()]
+    if not 1 <= len(parsed_views) <= 4:
+        raise ValueError("views must contain 1-4 comma-separated named views")
+    if not file_path:
+        cap_dir = os.path.join(tempfile.gettempdir(), "solidpilot_captures")
+        os.makedirs(cap_dir, exist_ok=True)
+        file_path = os.path.join(cap_dir, f"view_set_{int(time.time()*1000)}.png")
+    _call("capture_view_set", {
+        "file_path": file_path,
+        "views": parsed_views,
+        "tile_width": tile_width,
+        "tile_height": tile_height,
+    })
+    return Image(path=file_path)
+
+
 # ---------------------------------------------------------------------------
 # Tool: add_sketch_constraint
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(description="Apply horizontal, vertical, coincident, parallel, perpendicular, tangent, equal, or midpoint constraints to active-sketch entities selected by coordinates.")
 def add_sketch_constraint(
     constraint_type: Literal[
         "horizontal", "vertical", "coincident", "parallel",
@@ -334,11 +439,11 @@ def add_dimension(px: float, py: float, value: Annotated[float, Field(gt=0, desc
 # ---------------------------------------------------------------------------
 # Tool: extrude_feature
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(description="Create a boss, cut, revolve, revolved cut, sweep, or loft from the active sketch/profile(s). Uses meters and returns result_geometry for in-band verification. See solidworks_help('features') for end-condition and verification guidance.")
 def extrude_feature(
     depth: Annotated[float, Field(
         ge=0, description="Extrusion depth in METERS (required > 0 for boss/cut)")] = 0.0,
-    feature_type: Literal["boss", "cut", "revolve", "sweep", "loft"] = "boss",
+    feature_type: Literal["boss", "cut", "revolve", "revolve_cut", "sweep", "loft"] = "boss",
     angle: Annotated[float, Field(
         gt=0, le=360, description="Revolve angle in DEGREES")] = 360.0,
     axis_x1: float = 0.0,
@@ -396,7 +501,7 @@ def extrude_feature(
 # ---------------------------------------------------------------------------
 # Tool: create_rib
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(description="Create a rib from active open sketch lines. Set thickness, direction, draft, and optional reverse; returns the created feature and body summary.")
 def create_rib(
     thickness: Annotated[float, Field(gt=0, description="Rib thickness in METERS (e.g. 0.005 = 5mm)")],
     two_sided: bool = True,
@@ -433,7 +538,7 @@ def create_rib(
 # ---------------------------------------------------------------------------
 # Tool: add_edge_feature
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(description="Apply fillet or chamfer to selected model edges. Prefer edge_indices from analyze_model('edges'); coordinate selection is a fallback. Returns updated body geometry.")
 def add_edge_feature(
     feature_type: Literal["fillet", "chamfer"],
     radius_or_distance: Annotated[float, Field(gt=0, description="Fillet radius / chamfer FIRST-face setback (D1) in METERS (e.g. 0.01 = 10mm)")],
@@ -516,7 +621,7 @@ def add_drawing_view(
 # ---------------------------------------------------------------------------
 # Tool: add_flat_pattern_view
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(description="Add a flat-pattern drawing view with optional bend-line display. Use after create_drawing; returns the created view metadata.")
 def add_flat_pattern_view(
     pos_x: float = 0.1,
     pos_y: float = 0.1,
@@ -576,7 +681,7 @@ def add_drawing_dimension(
 # ---------------------------------------------------------------------------
 # Tool: auto_dimension_drawing
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(description="Automatically add drawing dimensions using the selected scheme and spacing. Best for initial annotation; verify with analyze_drawing and adjust important dimensions explicitly.")
 def auto_dimension_drawing(
     all_views: bool = True,
     include_unmarked: bool = False,
@@ -646,7 +751,7 @@ def add_hole_callout(px: float, py: float) -> str:
 # ---------------------------------------------------------------------------
 # Tool: add_section_view
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(description="Create a section drawing view from a cutting line. Supports full, half, offset, aligned, and broken-out sections; coordinates are sheet meters.")
 def add_section_view(
     px: float,
     py: float,
@@ -752,7 +857,7 @@ def save_document(file_path: str = "") -> str:
 # ---------------------------------------------------------------------------
 # Tool: analyze_model
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(description="Read active model data: mass_properties, geometry, faces, edges, features, sketch, or feature_map. Read-only; coordinates/values are SI. Use inspect_model for a compact multi-analysis plus visual check.")
 def analyze_model(
     analysis_type: Literal["mass_properties", "geometry", "edges", "faces", "features", "sketch", "feature_map"],
     name: str = "",
@@ -807,7 +912,7 @@ def analyze_model(
 # ---------------------------------------------------------------------------
 # Tool: analyze_drawing
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(description="Read drawing sheet/view metadata and dimensions; optionally include projected view geometry. Use to verify a drawing before export. See solidworks_help('drawings').")
 def analyze_drawing(include_geometry: bool = False) -> str:
     """Analyze the ACTIVE drawing document (read-only, does NOT change state) — the drawing-side sibling
     of analyze_model. Returns a JSON object {view_count, dimension_count, views:[{name, type, scale, pos,
@@ -833,7 +938,7 @@ def analyze_drawing(include_geometry: bool = False) -> str:
 # ---------------------------------------------------------------------------
 # Tool: get_selection
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(description="Report the faces, edges, vertices, or planes currently selected by the user, mapped to stable analyze_model indices where possible. Call before any tool that clears selection.")
 def get_selection() -> str:
     """Report what the USER currently has selected in the SolidWorks GUI — the inverse of index-based selection.
     When the user clicks geometry in the SolidWorks window (e.g. while telling you what to do — "put a hole on
@@ -864,7 +969,7 @@ def edit_sketch(sketch_name: str) -> str:
 # ---------------------------------------------------------------------------
 # Tool: add_reference_geometry
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(description="Create an offset plane, reference axis, or reference point. Returns the new feature name for later sketches, patterns, or selections.")
 def add_reference_geometry(
     type: Literal["plane", "axis", "point"],
     ref_plane_name: str = "",
@@ -900,7 +1005,7 @@ def add_reference_geometry(
 # ---------------------------------------------------------------------------
 # Tool: create_pattern
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(description="Create a linear, circular, or mirror feature pattern. Linear uses X/Y/Z; circular needs a named axis; mirror accepts one or more feature names. Returns pattern metadata for verification.")
 def create_pattern(
     pattern_type: Literal["linear", "circular", "mirror"],
     feature_name: str = "",
@@ -986,7 +1091,7 @@ def set_part_material(
 # ---------------------------------------------------------------------------
 # Tool: sheet_metal_feature
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(description="Create or finish base flanges, edge flanges, sketched bends, and flat patterns. Prefer stable edge/face indices from analyze_model. See solidworks_help('sheet_metal') before complex work.")
 def sheet_metal_feature(
     feature_type: Literal["base_flange", "edge_flange", "edge_flange_sketch", "edge_flange_finish",
                           "flat_pattern", "sketched_bend"],
@@ -1074,7 +1179,7 @@ def sheet_metal_feature(
 # ---------------------------------------------------------------------------
 # Tool: modify_dimension
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(description="Set a named SolidWorks dimension in SI units and rebuild. Use the exact full dimension name returned by analyze_model('features'); result_geometry confirms the effective value.")
 def modify_dimension(
     name: str,
     value: float,
@@ -1096,7 +1201,7 @@ def modify_dimension(
 # ---------------------------------------------------------------------------
 # Tool: edit_feature
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(description="Suppress, unsuppress, delete, or rename a named feature, then rebuild. Topology-changing actions invalidate old face/edge indices, so inspect again afterward.")
 def edit_feature(
     feature_name: str,
     action: Literal["suppress", "unsuppress", "delete", "rename"],
@@ -1204,7 +1309,287 @@ def _collect_parameters(node, out: list, feature_name: str = "") -> None:
             _collect_parameters(child, out, feature_name)
 
 
+def _normalized_response(response: dict, tool_name: str) -> dict:
+    """Small structured view of a raw execution response for orchestration."""
+    status = response.get("status")
+    if status == "COMPLETED":
+        state = response.get("cadState") or {}
+        payload = {
+            "ok": True,
+            "status": status,
+            "tool": tool_name,
+            "state_version": response.get("stateVersion"),
+            "document": state.get("activeDocument"),
+            "document_type": state.get("documentType"),
+        }
+        if state.get("activeSketch") is not None:
+            payload["sketch"] = state.get("activeSketch")
+        raw_features = state.get("features") or []
+        parsed = []
+        for item in raw_features:
+            if isinstance(item, str) and item.strip()[:1] in {"{", "["}:
+                try:
+                    item = json.loads(item)
+                except Exception:
+                    pass
+            parsed.append(item)
+        if parsed:
+            if tool_name.startswith("analyze_") or tool_name in {"get_selection", "verify_state"}:
+                payload["data"] = parsed[0] if len(parsed) == 1 else parsed
+            else:
+                payload["features"] = parsed
+        if response.get("result_geometry") is not None:
+            payload["result_geometry"] = response.get("result_geometry")
+        return {key: value for key, value in payload.items() if value is not None}
+
+    error = response.get("error") or {}
+    return {
+        "ok": status == "DUPLICATE",
+        "status": status or "UNKNOWN",
+        "tool": tool_name,
+        "state_version": response.get("stateVersion"),
+        "code": error.get("code"),
+        "message": error.get("message"),
+    }
+
+
+def _resolve_batch_value(value, prior: list[dict]):
+    """Resolve exact refs such as $last.features.0 or $2.sketch."""
+    if isinstance(value, dict):
+        return {key: _resolve_batch_value(item, prior) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_resolve_batch_value(item, prior) for item in value]
+    if not isinstance(value, str) or not value.startswith("$"):
+        return value
+
+    parts = value[1:].split(".")
+    head = parts.pop(0)
+    if head == "last":
+        if not prior:
+            raise ValueError("$last cannot be used by the first batch operation")
+        current = prior[-1]
+    elif head.isdigit() and int(head) < len(prior):
+        current = prior[int(head)]
+    else:
+        return value
+
+    for part in parts:
+        if isinstance(current, list) and part.isdigit():
+            current = current[int(part)]
+        elif isinstance(current, dict) and part in current:
+            current = current[part]
+        else:
+            raise ValueError(f"batch reference '{value}' does not resolve")
+    return current
+
+
+def _batch_summary(index: int, result: dict) -> dict:
+    summary = {
+        "i": index,
+        "tool": result.get("tool"),
+        "ok": result.get("ok"),
+        "status": result.get("status"),
+        "state_version": result.get("state_version"),
+    }
+    for key in ("sketch", "features", "result_geometry", "code", "message"):
+        if result.get(key) is not None:
+            summary[key] = result[key]
+    if "data" in result:
+        data = result["data"]
+        summary["data"] = data if isinstance(data, (str, int, float, bool)) else {
+            "kind": type(data).__name__, "items": len(data) if isinstance(data, list) else len(data.keys())
+        }
+    return summary
+
+
 @mcp.tool()
+def execute_batch(
+    operations: Annotated[list[dict], Field(min_length=1, max_length=100)],
+    stop_on_error: bool = True,
+    response_mode: Literal["summary", "full"] = "summary",
+) -> str:
+    """Execute 1-100 ordered low-level CAD operations in one MCP call. Each item is
+    {"tool":name,"params":{...}}. Exact refs like $last.features.0 may reuse earlier results."""
+    results = []
+    visible = []
+    for index, operation in enumerate(operations):
+        if not isinstance(operation, dict):
+            raise ValueError(f"operation {index} must be an object")
+        tool_name = operation.get("tool")
+        params = operation.get("params") or {}
+        if not isinstance(tool_name, str) or not tool_name:
+            raise ValueError(f"operation {index} requires a tool name")
+        if tool_name in {"execute_batch", "inspect_model", "solidworks_help"}:
+            raise ValueError(f"adapter-only tool '{tool_name}' cannot be nested in execute_batch")
+        if not isinstance(params, dict):
+            raise ValueError(f"operation {index} params must be an object")
+        resolved = _resolve_batch_value(params, results)
+        normalized = _normalized_response(_call_raw(tool_name, resolved), tool_name)
+        results.append(normalized)
+        visible.append(normalized if response_mode == "full" else _batch_summary(index, normalized))
+        if not normalized.get("ok") and stop_on_error:
+            break
+
+    final = results[-1] if results else {}
+    return json.dumps({
+        "ok": bool(results) and all(item.get("ok") for item in results),
+        "completed": sum(1 for item in results if item.get("ok")),
+        "requested": len(operations),
+        "stopped": len(results) < len(operations),
+        "document": final.get("document"),
+        "state_version": final.get("state_version"),
+        "results": visible,
+    }, separators=(",", ":"), ensure_ascii=False)
+
+
+def _feature_tree_summary(response: dict) -> dict:
+    items = _analysis_items(response)
+    recipe = items[0] if len(items) == 1 else items
+    if isinstance(recipe, str):
+        try:
+            recipe = json.loads(recipe)
+        except Exception:
+            return {"feature_count": len(items)}
+    features = recipe.get("features", []) if isinstance(recipe, dict) else []
+    type_counts = {}
+    names = []
+    for feature in features:
+        if not isinstance(feature, dict):
+            continue
+        names.append(feature.get("name"))
+        kind = feature.get("type") or "unknown"
+        type_counts[kind] = type_counts.get(kind, 0) + 1
+    return {
+        "feature_count": recipe.get("feature_count", len(features)) if isinstance(recipe, dict) else len(features),
+        "names": [name for name in names if name][:60],
+        "types": type_counts,
+    }
+
+
+@mcp.tool()
+def inspect_model(
+    include_features: bool = True,
+    include_visual: bool = True,
+    views: str = "top,isometric,right,front",
+    tile_width: Annotated[int, Field(ge=160, le=1000)] = 512,
+    tile_height: Annotated[int, Field(ge=120, le=800)] = 360,
+):
+    """One-call model inspection: compact topology/mass/feature facts and, by default,
+    one labelled multi-view PNG for fast visual verification. Assembly documents get
+    component/mate structure instead of part-only geometry/features analysis."""
+    state = _call_raw("verify_state", {})
+    doc_type = ((state.get("cadState") or {}).get("documentType") or "PART").upper()
+    document = (state.get("cadState") or {}).get("activeDocument")
+
+    if doc_type == "ASSEMBLY":
+        asm_items = _analysis_items(_call_raw("analyze_assembly", {
+            "include_faces": False, "include_mates": True, "top_level_only": True,
+        }))
+        try:
+            assembly = json.loads(asm_items[0]) if asm_items else {}
+        except Exception:
+            assembly = {}
+        snapshot = {
+            "ok": True,
+            "document": document,
+            "document_type": "ASSEMBLY",
+            "assembly": {
+                "component_count": assembly.get("component_count"),
+                "mate_count": assembly.get("mate_count"),
+                "components": [
+                    {k: c.get(k) for k in ("name", "suppression", "fixed", "configuration")}
+                    for c in assembly.get("components", []) if isinstance(c, dict)
+                ],
+                "mates": assembly.get("mates", []),
+            },
+        }
+        try:
+            mass_response = _call_raw("analyze_model", {
+                "analysis_type": "mass_properties", "name": "", "include_geometry": False,
+            })
+            snapshot["mass"] = _kv_dict(_analysis_items(mass_response))
+        except Exception:
+            snapshot["mass_unavailable"] = True
+    else:
+        geometry_response = _call_raw("analyze_model", {
+            "analysis_type": "geometry", "name": "", "include_geometry": False,
+        })
+        mass_response = _call_raw("analyze_model", {
+            "analysis_type": "mass_properties", "name": "", "include_geometry": False,
+        })
+        snapshot = {
+            "ok": True,
+            "document": document,
+            "document_type": doc_type,
+            "geometry": _kv_dict(_analysis_items(geometry_response)),
+            "mass": _kv_dict(_analysis_items(mass_response)),
+        }
+        if include_features:
+            snapshot["features"] = _feature_tree_summary(_call_raw("analyze_model", {
+                "analysis_type": "features", "name": "", "include_geometry": False,
+            }))
+    text = TextContent(type="text", text=json.dumps(
+        snapshot, separators=(",", ":"), ensure_ascii=False))
+    if not include_visual:
+        return [text]
+
+    parsed_views = [item.strip().lower() for item in views.split(",") if item.strip()]
+    if not 1 <= len(parsed_views) <= 4:
+        raise ValueError("views must contain 1-4 comma-separated named views")
+    cap_dir = os.path.join(tempfile.gettempdir(), "solidpilot_captures")
+    os.makedirs(cap_dir, exist_ok=True)
+    path = os.path.join(cap_dir, f"inspection_{int(time.time()*1000)}.png")
+    capture = _normalized_response(_call_raw("capture_view_set", {
+        "file_path": path,
+        "views": parsed_views,
+        "tile_width": tile_width,
+        "tile_height": tile_height,
+    }), "capture_view_set")
+    if not capture.get("ok"):
+        raise RuntimeError(json.dumps(capture, separators=(",", ":")))
+    return [text, Image(path=path)]
+
+
+@mcp.tool()
+def solidworks_help(
+    topic: Literal["visual_assignment", "batch", "sketch", "features", "sheet_metal", "drawings"] = "visual_assignment",
+) -> str:
+    """Return detailed SolidPilot guidance on demand, keeping the always-loaded tool schema small."""
+    guides = {
+        "visual_assignment": (
+            "Extract explicit dimensions, symmetry, feature counts, datums, and silhouettes from the reference. "
+            "If scale is absent, state one concept scale instead of implying an exact copy. Build the master body first, "
+            "then repeated/detail features. After each major feature call inspect_model and compare top, right/front, and "
+            "isometric views together: top verifies planform/count/spacing; side views verify height and taper; iso verifies "
+            "junctions. Fix modelling causes, not camera angles. Finish with one body, open-hole, feature-count, and mass checks."
+        ),
+        "batch": (
+            "Use execute_batch for ordered operations that do not need visual reasoning between steps: create_sketch, several "
+            "add_sketch_entity calls, constraints, and one feature. Reuse dynamic names with exact refs such as "
+            "$last.features.0, $0.sketch, or $2.result_geometry.path. Keep stop_on_error=true while building."
+        ),
+        "sketch": (
+            "Coordinates are meters in the returned sketch frame. Shared exact endpoints already close profiles; avoid redundant "
+            "coincident constraints. Use face_index from analyze_model for face sketches. Use reference planes for raised text."
+        ),
+        "features": (
+            "extrude_feature supports boss, cut, revolve, revolve_cut, sweep, and loft. Use through/up_to_face_index/mid_plane "
+            "instead of guessed depths. Verify result_geometry after every mutation; re-run topology analysis after edits."
+        ),
+        "sheet_metal": (
+            "Read analyze_model(features/edges/faces) first. Prefer stable edge_index and fixed_face_index selectors. Preserve the "
+            "original thickness orientation and bend_position. Create custom edge-flange profile with edge_flange_sketch, edit the "
+            "active generated sketch, then edge_flange_finish."
+        ),
+        "drawings": (
+            "Use drawings only for deliverables. For modelling verification use inspect_model/capture_view_set. For drawings: "
+            "create_drawing, add views, dimensions/marks/callouts, analyze_drawing, then export PDF/DWG/DXF."
+        ),
+    }
+    return guides[topic]
+
+
+@mcp.tool(description="Analyze a .SLDPRT and write a reusable .solidpilot analysis artifact containing source hash, feature recipe, parameters, topology, and mass data.")
 def save_analysis(file_path: str) -> str:
     """Analyze a part FILE and persist its analysis ARTIFACT — the entry tool of the analysis
     pipeline. Opens the part (activates it if already open), runs the standard reads (features
@@ -1316,7 +1701,7 @@ def save_analysis(file_path: str) -> str:
 # ---------------------------------------------------------------------------
 # Tool: rebuild_from_ir  (adapter-only — the analysis pipeline's IR door, IR-ADR-005)
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(description="Rebuild the feature graph stored in a SolidPilot analysis artifact, optionally in a fresh part. Reports completed nodes or the first failed operation.")
 def rebuild_from_ir(artifact_path: str, fresh_document: bool = True) -> str:
     """Rebuild a part from its analysis artifact's Feature Graph IR — the verification half of
     the round-trip ("the LLM proposes, the round-trip decides", IR-ADR-006). Reads
@@ -1396,7 +1781,7 @@ def rebuild_from_ir(artifact_path: str, fresh_document: bool = True) -> str:
 # ---------------------------------------------------------------------------
 # Tool: compare_parts  (adapter-only — the objective round-trip verifier, ADR-040/A0)
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(description="Compare two parts by topology, volume, area, and center of mass. Each argument may be an absolute part path or an open document title.")
 def compare_parts(doc_a: str, doc_b: str) -> str:
     """Objectively diff two part documents — the round-trip verifier behind the artifact's
     `verified` label (and a general-purpose "are these the same part?" check).
