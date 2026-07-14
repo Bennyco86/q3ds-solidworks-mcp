@@ -166,10 +166,27 @@
                 "views": "string at MCP surface (comma-separated); execution receives an array of 1-4 named views",
                 "tile_width": "integer (optional, default 512; 160..1000 pixels per tile)",
                 "tile_height": "integer (optional, default 360; 120..800 pixels per tile)",
-                "file_path": "string (optional at MCP surface; adapter generates a temporary PNG path)"
+                "file_path": "string (optional at MCP surface; adapter generates a temporary PNG path)",
+                "reference_image_path": "string (optional — design photo composed as a labelled row ABOVE the views; the reference-modeling compare loop. Use load_reference_image's normalized output path)"
             }
         },
         "output": "MCP Image. Execution result_geometry: {kind:'capture_set', path, views, tile_width, tile_height, width, height, bytes}."
+    },
+    "load_reference_image": {
+        "description": "Normalizes a design photo/drawing from disk (png/jpg/bmp/gif/tiff) for reference modeling: optional normalized crop box to zoom into details, long edge capped, PNG output returned as an MCP Image. Backed by the execution-layer prepare_reference_image handler (pure image op, no COM, no state bump).",
+        "input": {
+            "operation_id": "string (required, unique idempotency key)",
+            "state_version": "integer (required; read-only, not advanced)",
+            "params": {
+                "file_path": "string (required — source image on disk)",
+                "crop_x1": "number (optional, default 0 — normalized crop box 0..1)",
+                "crop_y1": "number (optional, default 0)",
+                "crop_x2": "number (optional, default 1)",
+                "crop_y2": "number (optional, default 1)",
+                "max_edge": "integer (optional, default 1568; 200..2000 — output long-edge cap)"
+            }
+        },
+        "output": "MCP Image. Execution result_geometry: {kind:'reference_image', path, width, height, bytes}."
     },
     "add_sketch_constraint": {
         "description": "Applies a geometric constraint to sketch entities in the active sketch. Single-entity constraints (horizontal, vertical) need only px1/py1. Two-entity constraints (coincident, parallel, perpendicular, tangent, equal, midpoint) also require px2/py2. entity_type1/2 defaults to 'SKETCHSEGMENT'; use 'SKETCHPOINT' for point-based constraints.",
@@ -664,7 +681,8 @@
                 "include_visual": "boolean (optional, default true)",
                 "views": "string (optional, comma-separated 1-4 views)",
                 "tile_width": "integer (optional, default 512; 160..1000)",
-                "tile_height": "integer (optional, default 360; 120..800)"
+                "tile_height": "integer (optional, default 360; 120..800)",
+                "reference_image_path": "string (optional — design photo composed above the views in the montage)"
             }
         },
         "output": "Text content containing compact JSON plus an MCP Image when include_visual=true."

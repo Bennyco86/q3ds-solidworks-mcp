@@ -68,7 +68,7 @@ def _call(tool_name: str, params: dict) -> str:
 # ---------------------------------------------------------------------------
 # Tool: ensure_ready  (lifecycle / bootstrap — not a state-versioned CAD op)
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(description="Bring the SolidWorks environment up (starts the execution server and/or SolidWorks if needed; attaches if running). Idempotent; call first in a session or after connection errors.")
 def ensure_ready() -> str:
     """Bring the SolidWorks environment up and confirm it is ready to use.
 
@@ -114,7 +114,7 @@ def open_new_part(template_path: str = "") -> str:
 # ---------------------------------------------------------------------------
 # Tool: open_document
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(description="Open an EXISTING file from disk and make it active. Native .sldprt/.sldasm/.slddrw directly; STEP/IGES/.ipt/.CATPart import as a part via 3D Interconnect (clear OPEN_FAILED if unlicensed).")
 def open_document(file_path: str) -> str:
     """Open an EXISTING document from disk (counterpart to open_new_part, which makes a BLANK doc).
     file_path: full path to the file.
@@ -367,9 +367,12 @@ def capture_view_set(
     tile_width: Annotated[int, Field(ge=160, le=1000)] = 512,
     tile_height: Annotated[int, Field(ge=120, le=800)] = 360,
     file_path: str = "",
+    reference_image_path: str = "",
 ) -> Image:
     """Return one labelled PNG montage of 1-4 named views. Use this instead of
-    four capture_view calls when checking shape, proportions, and screenshot-driven work."""
+    four capture_view calls when checking shape, proportions, and screenshot-driven work.
+    reference_image_path: compose that design photo ABOVE the views — the compare
+    loop when modeling from a reference (use load_reference_image's output path)."""
     parsed_views = [item.strip().lower() for item in views.split(",") if item.strip()]
     if not 1 <= len(parsed_views) <= 4:
         raise ValueError("views must contain 1-4 comma-separated named views")
@@ -382,8 +385,35 @@ def capture_view_set(
         "views": parsed_views,
         "tile_width": tile_width,
         "tile_height": tile_height,
+        "reference_image_path": reference_image_path,
     })
     return Image(path=file_path)
+
+
+@mcp.tool()
+def load_reference_image(
+    file_path: str,
+    crop_x1: float = 0.0,
+    crop_y1: float = 0.0,
+    crop_x2: float = 1.0,
+    crop_y2: float = 1.0,
+    max_edge: Annotated[int, Field(ge=200, le=2000)] = 1568,
+) -> Image:
+    """SEE a design photo/drawing from disk (png/jpg/bmp/gif/tiff): normalized to PNG,
+    long edge capped, returned as an image. Crop with the normalized 0..1 box to zoom
+    into details (dimensions, small features). Call FIRST when modeling from a photo;
+    reuse the normalized copy via capture_view_set(reference_image_path=...) after
+    each feature. Get the build protocol from solidworks_help('reference_modeling')."""
+    cap_dir = os.path.join(tempfile.gettempdir(), "solidpilot_captures")
+    os.makedirs(cap_dir, exist_ok=True)
+    out_path = os.path.join(cap_dir, f"reference_{int(time.time()*1000)}.png")
+    _call("prepare_reference_image", {
+        "file_path": file_path, "out_path": out_path,
+        "crop_x1": crop_x1, "crop_y1": crop_y1,
+        "crop_x2": crop_x2, "crop_y2": crop_y2,
+        "max_edge": max_edge,
+    })
+    return Image(path=out_path)
 
 
 # ---------------------------------------------------------------------------
@@ -712,7 +742,7 @@ def auto_dimension_drawing(
 # ---------------------------------------------------------------------------
 # Tool: auto_center_marks
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(description="Auto-place center marks/centerlines on every hole and slot in all views of the active drawing (no coordinate picking). Call after views exist; returns the mark count.")
 def auto_center_marks(
     include_slots: bool = True,
     extended_lines: bool = True,
@@ -737,7 +767,7 @@ def auto_center_marks(
 # ---------------------------------------------------------------------------
 # Tool: add_hole_callout
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(description="Insert a hole callout (e.g. '4x Dia8 THRU') on the hole edge nearest sheet point (px, py) in meters, in the active drawing. Place the point ON the hole's projected circle; prefer auto_center_marks for centerlines.")
 def add_hole_callout(px: float, py: float) -> str:
     """Insert a hole callout (e.g. '4× Ø8 THRU') on the hole edge nearest the sheet point (px, py)
     in the active drawing. Coordinate-based selection — same fragile point pick as add_drawing_dimension
@@ -798,7 +828,7 @@ def add_section_view(
 # ---------------------------------------------------------------------------
 # Tool: export_document
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(description="Export the active document: STEP/IGES/STL for models, PDF/DWG/DXF for drawings. file_path must carry the matching extension.")
 def export_document(format: Literal["STEP", "IGES", "STL", "PDF", "DWG", "DXF"], file_path: str) -> str:
     """Export the active SolidWorks document to a file. The document remains open after export.
     format: 'STEP', 'IGES', 'STL', 'PDF', 'DWG', 'DXF'.
@@ -1075,7 +1105,7 @@ def create_pattern(
 # ---------------------------------------------------------------------------
 # Tool: set_part_material
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(description="Assign a material (e.g. 'AISI 304', '6061-T6', 'ABS') from a SolidWorks material library to the active part; affects mass properties.")
 def set_part_material(
     material_name: str,
     library: str = "SolidWorks Materials",
@@ -1473,10 +1503,13 @@ def inspect_model(
     views: str = "top,isometric,right,front",
     tile_width: Annotated[int, Field(ge=160, le=1000)] = 512,
     tile_height: Annotated[int, Field(ge=120, le=800)] = 360,
+    reference_image_path: str = "",
 ):
     """One-call model inspection: compact topology/mass/feature facts and, by default,
     one labelled multi-view PNG for fast visual verification. Assembly documents get
-    component/mate structure instead of part-only geometry/features analysis."""
+    component/mate structure instead of part-only geometry/features analysis.
+    reference_image_path: compose that design photo above the views (reference-modeling
+    compare loop)."""
     state = _call_raw("verify_state", {})
     doc_type = ((state.get("cadState") or {}).get("documentType") or "PART").upper()
     document = (state.get("cadState") or {}).get("activeDocument")
@@ -1544,6 +1577,7 @@ def inspect_model(
         "views": parsed_views,
         "tile_width": tile_width,
         "tile_height": tile_height,
+        "reference_image_path": reference_image_path,
     }), "capture_view_set")
     if not capture.get("ok"):
         raise RuntimeError(json.dumps(capture, separators=(",", ":")))
@@ -1552,10 +1586,27 @@ def inspect_model(
 
 @mcp.tool()
 def solidworks_help(
-    topic: Literal["visual_assignment", "batch", "sketch", "features", "sheet_metal", "drawings"] = "visual_assignment",
+    topic: Literal["visual_assignment", "reference_modeling", "batch", "sketch", "features", "sheet_metal", "drawings"] = "visual_assignment",
 ) -> str:
     """Return detailed SolidPilot guidance on demand, keeping the always-loaded tool schema small."""
     guides = {
+        "reference_modeling": (
+            "Modeling a part from a design photo/drawing + user input, step by step. "
+            "1) DECOMPOSE FIRST, never build while first reading the image: load_reference_image, then crop "
+            "into each region (load_reference_image with crop box) and write down: overall silhouette, symmetry, "
+            "feature counts (holes/teeth/ribs — COUNT them), datum faces, and every legible dimension or "
+            "callout. 2) SCALE: if the image has no dimensions, ask the user or state ONE assumed overall "
+            "dimension and derive the rest by pixel proportion — say so explicitly. 3) PLAN a feature tree "
+            "(base body first, then large subtractions, then repeated features via patterns, details last) and "
+            "tell the user the plan with dimensions before building. 4) BUILD one feature at a time; after each "
+            "mutation verify result_geometry volume against a hand prediction. 5) COMPARE VISUALLY after every "
+            "major feature: capture_view_set(reference_image_path=<normalized reference>) puts the photo above "
+            "your top/front/iso views in one image — fix modeling causes, not camera angles. Match the photo's "
+            "orientation to a named view when choosing views. 6) Details that read as 'texture' in the photo "
+            "(knurling, engraved text) come LAST and may be optional — confirm with the user. 7) Finish: one "
+            "body (unless multi-part intended), feature-count matches the decomposition, inspect_model stats "
+            "consistent with stated dimensions."
+        ),
         "visual_assignment": (
             "Extract explicit dimensions, symmetry, feature counts, datums, and silhouettes from the reference. "
             "If scale is absent, state one concept scale instead of implying an exact copy. Build the master body first, "

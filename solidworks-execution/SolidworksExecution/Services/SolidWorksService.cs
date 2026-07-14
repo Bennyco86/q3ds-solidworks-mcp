@@ -1917,6 +1917,95 @@ namespace SolidworksExecution.Services
         // Capture up to four named views and combine them into one labelled PNG. A single
         // montage gives a vision-capable agent orthographic + isometric context with one MCP
         // result and substantially fewer image tokens than four independent screenshots.
+        // Pure image utility (no COM): normalize a user's design photo for the reference-
+        // modeling loop — optional normalized crop (zoom into a detail), long-edge cap, PNG out.
+        // System.Drawing reads png/jpg/bmp/gif/tiff; webp/heic must be converted first.
+        public ExecutionResponse PrepareReferenceImage(ToolRequest request)
+        {
+            try
+            {
+                var p = request.Params as JObject;
+                string filePath = p?.Value<string>("file_path");
+                string outPath = p?.Value<string>("out_path");
+                if (string.IsNullOrEmpty(filePath) || string.IsNullOrEmpty(outPath))
+                    return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                        "MISSING_PARAMETER", "file_path and out_path are required.");
+                if (!System.IO.File.Exists(filePath))
+                    return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                        "FILE_NOT_FOUND", $"No image at '{filePath}'.");
+
+                double x1 = Math.Max(0.0, Math.Min(1.0, p?.Value<double?>("crop_x1") ?? 0.0));
+                double y1 = Math.Max(0.0, Math.Min(1.0, p?.Value<double?>("crop_y1") ?? 0.0));
+                double x2 = Math.Max(0.0, Math.Min(1.0, p?.Value<double?>("crop_x2") ?? 1.0));
+                double y2 = Math.Max(0.0, Math.Min(1.0, p?.Value<double?>("crop_y2") ?? 1.0));
+                if (x2 <= x1 || y2 <= y1)
+                    return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                        "INVALID_PARAMETER", "crop box must satisfy x2>x1 and y2>y1 (normalized 0..1).");
+                int maxEdge = p?.Value<int?>("max_edge") ?? 1568;
+                if (maxEdge < 200 || maxEdge > 2000)
+                    return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                        "INVALID_PARAMETER", "max_edge must be 200..2000.");
+
+                int outW, outH;
+                using (var src = new System.Drawing.Bitmap(filePath))
+                {
+                    var cropRect = new System.Drawing.Rectangle(
+                        (int)Math.Round(x1 * src.Width),
+                        (int)Math.Round(y1 * src.Height),
+                        Math.Max(1, (int)Math.Round((x2 - x1) * src.Width)),
+                        Math.Max(1, (int)Math.Round((y2 - y1) * src.Height)));
+                    cropRect.Intersect(new System.Drawing.Rectangle(0, 0, src.Width, src.Height));
+
+                    double scale = Math.Min(1.0,
+                        (double)maxEdge / Math.Max(cropRect.Width, cropRect.Height));
+                    outW = Math.Max(1, (int)Math.Round(cropRect.Width * scale));
+                    outH = Math.Max(1, (int)Math.Round(cropRect.Height * scale));
+
+                    string outDir = System.IO.Path.GetDirectoryName(outPath);
+                    if (!string.IsNullOrEmpty(outDir)) System.IO.Directory.CreateDirectory(outDir);
+                    using (var dst = new System.Drawing.Bitmap(outW, outH))
+                    using (var g = System.Drawing.Graphics.FromImage(dst))
+                    {
+                        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                        g.DrawImage(src, new System.Drawing.Rectangle(0, 0, outW, outH),
+                            cropRect, System.Drawing.GraphicsUnit.Pixel);
+                        dst.Save(outPath, System.Drawing.Imaging.ImageFormat.Png);
+                    }
+                }
+
+                return new ExecutionResponse
+                {
+                    OperationId = request.OperationId,
+                    Status = "COMPLETED",
+                    Verified = true,
+                    StateVersion = _guard.GetCurrentStateVersion(),
+                    CadState = new CadState
+                    {
+                        StateVersion = _guard.GetCurrentStateVersion(),
+                        ActiveDocument = "",
+                        DocumentType = "NONE",
+                        ActiveSketch = null,
+                        Features = new List<string>(),
+                        Dimensions = new List<string>()
+                    },
+                    ResultGeometry = new JObject
+                    {
+                        ["kind"] = "reference_image",
+                        ["path"] = outPath,
+                        ["width"] = outW,
+                        ["height"] = outH,
+                        ["bytes"] = new System.IO.FileInfo(outPath).Length
+                    },
+                    Error = null
+                };
+            }
+            catch (Exception ex)
+            {
+                return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                    "UNEXPECTED_ERROR", ex.Message);
+            }
+        }
+
         public ExecutionResponse CaptureViewSet(ToolRequest request)
         {
             if (!EnsureConnected())
@@ -1998,11 +2087,34 @@ namespace SolidworksExecution.Services
                         tiles.Add(new System.Drawing.Bitmap(loaded));
                 }
 
+                // Optional reference photo composed as a labelled top row — the compare-and-
+                // iterate loop for modeling from a design photo: one image shows the target
+                // directly above the live model views.
+                string referencePath = p?.Value<string>("reference_image_path");
+                System.Drawing.Bitmap referenceBmp = null;
+                if (!string.IsNullOrEmpty(referencePath))
+                {
+                    if (!System.IO.File.Exists(referencePath))
+                        return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                            "FILE_NOT_FOUND", $"reference_image_path '{referencePath}' does not exist.");
+                    using (var loaded = new System.Drawing.Bitmap(referencePath))
+                        referenceBmp = new System.Drawing.Bitmap(loaded);
+                }
+
                 int columns = views.Count == 1 ? 1 : 2;
                 int rows = (views.Count + columns - 1) / columns;
                 int labelHeight = 28;
                 int canvasWidth = columns * tileWidth;
-                int canvasHeight = rows * (tileHeight + labelHeight);
+                int referenceHeight = 0;
+                if (referenceBmp != null)
+                {
+                    // Scale reference to canvas width, capped so the model rows stay prominent.
+                    referenceHeight = Math.Min(
+                        (int)Math.Round((double)referenceBmp.Height * canvasWidth / referenceBmp.Width),
+                        Math.Max(240, tileHeight));
+                }
+                int referenceBlock = referenceBmp != null ? referenceHeight + labelHeight : 0;
+                int canvasHeight = referenceBlock + rows * (tileHeight + labelHeight);
                 string dir = System.IO.Path.GetDirectoryName(filePath);
                 if (!string.IsNullOrEmpty(dir)) System.IO.Directory.CreateDirectory(dir);
 
@@ -2012,12 +2124,19 @@ namespace SolidworksExecution.Services
                 using (var border = new System.Drawing.Pen(System.Drawing.Color.FromArgb(150, 150, 150)))
                 {
                     graphics.Clear(System.Drawing.Color.FromArgb(245, 245, 245));
+                    if (referenceBmp != null)
+                    {
+                        graphics.DrawString("REFERENCE (dims from user/callouts, NOT pixels)", font,
+                            System.Drawing.Brushes.Black, 8, 4);
+                        graphics.DrawImage(referenceBmp, 0, labelHeight, canvasWidth, referenceHeight);
+                        graphics.DrawRectangle(border, 0, labelHeight, canvasWidth - 1, referenceHeight - 1);
+                    }
                     for (int i = 0; i < tiles.Count; i++)
                     {
                         int column = i % columns;
                         int row = i / columns;
                         int x = column * tileWidth;
-                        int y = row * (tileHeight + labelHeight);
+                        int y = referenceBlock + row * (tileHeight + labelHeight);
                         graphics.DrawString(views[i].ToUpperInvariant(), font,
                             System.Drawing.Brushes.Black, x + 8, y + 4);
                         graphics.DrawImage(tiles[i], x, y + labelHeight, tileWidth, tileHeight);
@@ -2025,6 +2144,7 @@ namespace SolidworksExecution.Services
                     }
                     canvas.Save(filePath, System.Drawing.Imaging.ImageFormat.Png);
                 }
+                referenceBmp?.Dispose();
 
                 long bytes = new System.IO.FileInfo(filePath).Length;
                 return new ExecutionResponse

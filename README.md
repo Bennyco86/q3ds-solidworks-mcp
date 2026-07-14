@@ -21,12 +21,14 @@ SolidPilot is **not** a Claude-only plugin; it is **a general bridge between Sol
 
 ## Fork additions
 
-The fork currently exposes **47 MCP tools**. Its improvement passes add native sketch text,
+The fork currently exposes **48 MCP tools**. Its improvement passes add native sketch text,
 single- and multi-view model screenshots, compact JSON responses, batched execution, compact
 model inspection, revolved cuts, persistent HTTP connections, multi-region boss recovery, higher
-volume precision, clearer diagnostics, and a first native assembly slice (insert components,
+volume precision, clearer diagnostics, a first native assembly slice (insert components,
 coincident/concentric/distance mates via persistent face references, read-only assembly
-analysis). See [CHANGELOG.md](CHANGELOG.md) for release history.
+analysis), and a reference-modeling workflow (load/crop design photos, reference-vs-model
+comparison montages, an on-demand photo-to-part protocol). See [CHANGELOG.md](CHANGELOG.md)
+for release history.
 
 ---
 

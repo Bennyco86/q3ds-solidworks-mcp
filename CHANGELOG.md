@@ -3,6 +3,28 @@
 This file records changes made by the independently maintained fork after upstream commit
 `a7348f0`. Upstream history remains available in Git.
 
+## 2026-07-12 — Reference-modeling pass (design photos + user input)
+
+### Added
+
+- `load_reference_image` — normalize a design photo/drawing from disk (png/jpg/bmp/gif/tiff)
+  and SEE it: optional normalized crop box to zoom into details/dimensions, long-edge cap,
+  returned as MCP image content. Backed by a new pure-image `prepare_reference_image`
+  execution handler (no COM, no state change).
+- `capture_view_set(reference_image_path=...)` and `inspect_model(reference_image_path=...)` —
+  compose the design photo as a labelled row ABOVE the live model views in one PNG: the
+  compare-and-iterate loop for modeling from a reference, one image per check.
+- `solidworks_help("reference_modeling")` — the photo-to-part protocol (decompose first, crop
+  for details, one stated scale assumption, feature-tree plan, per-feature volume checks,
+  reference-vs-model visual compare after every major feature).
+
+### Changed
+
+- 47 → 48 tools while the always-loaded schema SHRANK (~32.6k → ~31.4k chars): concise
+  schema descriptions for auto_center_marks, open_document, add_hole_callout, ensure_ready,
+  export_document, and set_part_material (full guidance stays in source docstrings and
+  on-demand help).
+
 ## 2026-07-12 — Native assembly pass (first slice)
 
 ### Added

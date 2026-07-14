@@ -155,6 +155,7 @@ namespace SolidworksExecution.Controllers
                 case "add_sketch_entity":      return _service.AddSketchEntity(request);
                 case "add_sketch_text":        return _service.AddSketchText(request);
                 case "capture_view":           return _service.CaptureView(request);
+                case "prepare_reference_image": return _service.PrepareReferenceImage(request);
                 case "capture_view_set":       return _service.CaptureViewSet(request);
                 case "add_dimension":          return _service.AddDimension(request);
                 case "add_sketch_constraint":  return _service.AddSketchConstraint(request);
