@@ -1,6 +1,8 @@
 import hashlib
 import json
+import math
 import os
+import re
 import tempfile
 import time
 import uuid
@@ -27,6 +29,9 @@ mcp = FastMCP("solidworks-execution-adapter")
 # Auto-resyncs from the execution layer on an INVALID_STATE_VERSION mismatch
 # (e.g. the execution server was restarted after a rebuild).
 _state_version: int = 0
+
+_REFERENCE_INDEX_DIR = os.path.abspath(os.path.join(
+    os.path.dirname(__file__), "..", "..", ".solidpilot", "reference-index"))
 
 
 def _next_operation_id() -> str:
@@ -63,6 +68,98 @@ def _call(tool_name: str, params: dict) -> str:
             tool_name, _next_operation_id(), _state_version, params)
     _update_state_version(response)
     return map_response(response, tool_name=tool_name)
+
+
+def _reference_snippet(text: str, terms: list[str], width: int = 500) -> str:
+    """Return a compact passage around the first matched term, never a full PDF page."""
+    lowered = text.lower()
+    positions = [lowered.find(term) for term in terms if lowered.find(term) >= 0]
+    center = min(positions) if positions else 0
+    start = max(0, center - width // 3)
+    end = min(len(text), start + width)
+    snippet = re.sub(r"\s+", " ", text[start:end]).strip()
+    if start: snippet = "..." + snippet
+    if end < len(text): snippet += "..."
+    return snippet
+
+
+def _parse_face_coordinates(value: str, parameter_name: str, allow_empty: bool = False) -> list[dict]:
+    """Validate a JSON-string face-coordinate array at the MCP boundary."""
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{parameter_name} must be a JSON array of {{x,y,z}} objects: {exc.msg}") from exc
+    if not isinstance(parsed, list) or (not parsed and not allow_empty):
+        requirement = "may be empty" if allow_empty else "must contain at least one face"
+        raise ValueError(f"{parameter_name} must be a JSON array and {requirement}")
+
+    normalized = []
+    for index, item in enumerate(parsed):
+        if not isinstance(item, dict) or set(item) != {"x", "y", "z"}:
+            raise ValueError(f"{parameter_name}[{index}] must contain exactly x, y, and z")
+        coords = {}
+        for axis in ("x", "y", "z"):
+            raw = item[axis]
+            if isinstance(raw, bool) or not isinstance(raw, (int, float)) or not math.isfinite(raw):
+                raise ValueError(f"{parameter_name}[{index}].{axis} must be a finite number in meters")
+            coords[axis] = float(raw)
+        normalized.append(coords)
+    return normalized
+
+
+@mcp.tool(description="Search locally indexed SolidWorks reference books and return short page-cited passages. Read-only; PDFs stay outside the repository.")
+def search_solidworks_references(
+    query: str,
+    source: Literal["all", "flow_simulation_2024", "advanced_solidworks_2025"] = "all",
+    max_results: Annotated[int, Field(ge=1, le=10)] = 5,
+) -> str:
+    """Search the two local SolidWorks books by page.
+
+    Use this before planning unfamiliar advanced-modeling or Flow Simulation work. Results cite the
+    book title and PDF page number and include only a short relevant passage. `source='all'` searches
+    both books; choose a source id to narrow it. The local index is rebuilt with
+    `scripts/build_reference_index.py` when PDFs change.
+    """
+    terms = [term for term in re.findall(r"[a-z0-9]+", query.lower()) if len(term) > 1]
+    if not terms:
+        raise ValueError("query must contain at least one searchable word")
+    if not os.path.isdir(_REFERENCE_INDEX_DIR):
+        raise RuntimeError(
+            "SolidWorks reference index is missing. Run scripts/build_reference_index.py first.")
+
+    candidates: list[tuple[int, dict]] = []
+    for name in os.listdir(_REFERENCE_INDEX_DIR):
+        if not name.endswith(".jsonl"):
+            continue
+        source_id = name[:-6]
+        if source != "all" and source_id != source:
+            continue
+        with open(os.path.join(_REFERENCE_INDEX_DIR, name), "r", encoding="utf-8") as stream:
+            for line in stream:
+                record = json.loads(line)
+                page_text = record.get("text", "")
+                lowered = page_text.lower()
+                counts = [lowered.count(term) for term in terms]
+                matched_terms = sum(count > 0 for count in counts)
+                if not matched_terms:
+                    continue
+                phrase_bonus = 20 if query.lower() in lowered else 0
+                coverage_bonus = 10 * matched_terms
+                frequency = min(30, sum(counts))
+                candidates.append((phrase_bonus + coverage_bonus + frequency, record))
+
+    candidates.sort(key=lambda item: (-item[0], item[1]["title"], item[1]["page"]))
+    if not candidates:
+        return f"No indexed SolidWorks reference pages matched: {query!r}"
+
+    results = []
+    for score, record in candidates[:max_results]:
+        results.append(
+            f"[{record['title']} - PDF page {record['page']}]\n"
+            f"{_reference_snippet(record['text'], terms)}\n"
+            f"Source: {record['path']}"
+        )
+    return "\n\n".join(results)
 
 
 # ---------------------------------------------------------------------------
@@ -1116,6 +1213,106 @@ def set_part_material(
     The applied material is visible in Mass Properties and the feature tree.
     Requires an active part document — not a drawing."""
     return _call("set_part_material", {"material_name": material_name, "library": library})
+
+
+# ---------------------------------------------------------------------------
+# Tools: SolidWorks Simulation (static FEA + topology optimization)
+# ---------------------------------------------------------------------------
+@mcp.tool(description="Create a SolidWorks Simulation static or topology study on the active part/assembly. Study names accept letters, digits, and underscores only.")
+def sim_create_study(
+    name: Annotated[str, Field(min_length=1, pattern=r"^[A-Za-z0-9_]+$")],
+    study_type: Literal["static", "topology"] = "static",
+) -> str:
+    """Create and activate a Simulation study. Topology studies require the appropriate Simulation license."""
+    return _call("sim_create_study", {"name": name, "study_type": study_type})
+
+
+@mcp.tool(description="Add a fixed-geometry fixture to faces in a Simulation study. Face coordinates are model-space meters from analyze_model('faces').")
+def sim_add_fixture(study_name: str, faces: str) -> str:
+    """faces is a JSON array string such as '[{"x":0.05,"y":0,"z":-0.09}]'."""
+    return _call(
+        "sim_add_fixture",
+        {"study_name": study_name, "faces": _parse_face_coordinates(faces, "faces")},
+    )
+
+
+@mcp.tool(description="Add a force normal to one or more faces in a Simulation study. The signed total magnitude is newtons; use the sign to reverse the selected-face normal direction.")
+def sim_add_force(study_name: str, faces: str, newtons: float) -> str:
+    """faces is a JSON array string of model-space meter coordinates; newtons may be negative."""
+    return _call(
+        "sim_add_force",
+        {
+            "study_name": study_name,
+            "faces": _parse_face_coordinates(faces, "faces"),
+            "newtons": newtons,
+        },
+    )
+
+
+@mcp.tool(description="Create a Simulation mesh and run the named study. Lengths are meters; this call may take several minutes and uses the dedicated simulation timeout.")
+def sim_mesh_and_run(
+    study_name: str,
+    element_size: Annotated[float, Field(gt=0, description="Global element size in METERS")] = 0.006,
+    tolerance: Annotated[float, Field(gt=0, description="Mesh tolerance in METERS")] = 0.0003,
+    draft_quality: bool = False,
+) -> str:
+    """Mesh and solve a fully defined study. High-quality mesh is the default."""
+    return _call(
+        "sim_mesh_and_run",
+        {
+            "study_name": study_name,
+            "element_size": element_size,
+            "tolerance": tolerance,
+            "draft_quality": draft_quality,
+        },
+    )
+
+
+@mcp.tool(description="Read min/max von Mises stress, resultant displacement, and factor of safety from a solved static Simulation study.")
+def sim_get_results(
+    study_name: str,
+    yield_strength_pa: Annotated[float, Field(
+        ge=0, description="Optional yield strength in Pa for a user-defined factor of safety; zero uses the assigned material")
+    ] = 0.0,
+) -> str:
+    """Read-only. Stress is Pa and displacement is meters; pass yield strength when the material lacks one."""
+    return _call(
+        "sim_get_results",
+        {"study_name": study_name, "yield_strength_pa": yield_strength_pa},
+    )
+
+
+@mcp.tool(description="Configure goal, mass reduction, preserved faces, and minimum member thickness for a topology study.")
+def sim_topology_setup(
+    study_name: str,
+    goal: Literal["best_stiffness", "minimize_mass"] = "best_stiffness",
+    mass_reduction_percent: Annotated[float, Field(gt=0, lt=100)] = 50.0,
+    preserved_faces: str = "[]",
+    min_thickness: Annotated[float, Field(ge=0, description="Minimum printable member thickness in METERS; zero disables it")] = 0.003,
+) -> str:
+    """Configure a topology study before sim_mesh_and_run. preserved_faces is a JSON array string."""
+    return _call(
+        "sim_topology_setup",
+        {
+            "study_name": study_name,
+            "goal": goal,
+            "mass_reduction_percent": mass_reduction_percent,
+            "preserved_faces": _parse_face_coordinates(
+                preserved_faces, "preserved_faces", allow_empty=True
+            ),
+            "min_thickness": min_thickness,
+        },
+    )
+
+
+@mcp.tool(description="List all SolidWorks Simulation studies on the active document. Read-only.")
+def sim_list_studies() -> str:
+    return _call("sim_list_studies", {})
+
+
+@mcp.tool(description="Delete a named SolidWorks Simulation study from the active document.")
+def sim_delete_study(name: str) -> str:
+    return _call("sim_delete_study", {"name": name})
 
 
 # ---------------------------------------------------------------------------

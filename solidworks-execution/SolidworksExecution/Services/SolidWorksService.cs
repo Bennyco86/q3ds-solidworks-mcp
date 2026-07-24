@@ -9,7 +9,7 @@ using SolidworksExecution.Models;
 
 namespace SolidworksExecution.Services
 {
-    public class SolidWorksService
+    public partial class SolidWorksService
     {
         private readonly IOperationGuard _guard;
         private ISldWorks _solidWorks;
@@ -2959,11 +2959,22 @@ namespace SolidworksExecution.Services
                 }
                 else
                 {
+                    filePath = System.IO.Path.GetFullPath(filePath);
+
+                    string expectedExtension = modelDoc is IDrawingDoc ? ".slddrw" :
+                        (modelDoc is IAssemblyDoc ? ".sldasm" : ".sldprt");
+                    string requestedExtension = System.IO.Path.GetExtension(filePath);
+                    if (!string.Equals(requestedExtension, expectedExtension, StringComparison.OrdinalIgnoreCase))
+                        return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                            "INVALID_EXTENSION", $"Active {DocTypeName(modelDoc)} document must be saved as {expectedExtension}; received '{requestedExtension}'.");
+
                     // SaveAs to an explicit path. Ensure output directory exists.
                     string dir = System.IO.Path.GetDirectoryName(filePath);
                     if (!string.IsNullOrEmpty(dir) && !System.IO.Directory.Exists(dir))
                         System.IO.Directory.CreateDirectory(dir);
 
+                    // Official SaveAs guidance: clear selections so the whole document is saved/exported.
+                    modelDoc.ClearSelection2(true);
                     success = modelDoc.Extension.SaveAs3(filePath,
                         (int)swSaveAsVersion_e.swSaveAsCurrentVersion,
                         (int)swSaveAsOptions_e.swSaveAsOptions_Silent,
@@ -2975,8 +2986,16 @@ namespace SolidworksExecution.Services
                     return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
                         "SAVE_FAILED", $"Save failed. Errors: {saveErrors}, Warnings: {saveWarnings}. Ensure the output path is writable and the extension matches the document type (.sldprt/.sldasm/.slddrw).");
 
+                string expectedPath = string.IsNullOrEmpty(filePath) ? modelDoc.GetPathName() : filePath;
+                if (string.IsNullOrEmpty(expectedPath) || !System.IO.File.Exists(expectedPath))
+                    return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                        "SAVE_NOT_WRITTEN", $"SolidWorks reported success but the expected file was not found: '{expectedPath}'.");
+
+                if (saveWarnings != 0)
+                    ExecLog.Write($"save_document completed with warnings={saveWarnings} path={expectedPath}");
+
                 // Saving does not change CAD geometry — state_version is unchanged (same as export).
-                string savedPath = modelDoc.GetPathName();
+                string savedPath = expectedPath;
                 var response = new ExecutionResponse
                 {
                     OperationId = request.OperationId,

@@ -21,13 +21,15 @@ SolidPilot is **not** a Claude-only plugin; it is **a general bridge between Sol
 
 ## Fork additions
 
-The fork currently exposes **48 MCP tools**. Its improvement passes add native sketch text,
+The fork currently exposes **57 MCP tools**. Its improvement passes add native sketch text,
 single- and multi-view model screenshots, compact JSON responses, batched execution, compact
 model inspection, revolved cuts, persistent HTTP connections, multi-region boss recovery, higher
 volume precision, clearer diagnostics, a first native assembly slice (insert components,
 coincident/concentric/distance mates via persistent face references, read-only assembly
 analysis), and a reference-modeling workflow (load/crop design photos, reference-vs-model
-comparison montages, an on-demand photo-to-part protocol). See [CHANGELOG.md](CHANGELOG.md)
+comparison montages, an on-demand photo-to-part protocol). Eight SolidWorks Simulation tools add
+static/topology study creation, fixtures, forces, meshing/solving, result extraction, topology
+controls, study listing, and deletion. See [CHANGELOG.md](CHANGELOG.md)
 for release history.
 
 ---
@@ -52,7 +54,7 @@ flowchart TD
     U(["User + AI client<br/>Claude · OpenClaw · OpenAI · local LLM"])
 
     subgraph ADAPT["adapters/* — MCP bridge · MCP BOUNDARY = top"]
-        LOW["47 MCP tools<br/>sketch · features · assembly · batch · inspect · drawing · capture"]
+        LOW["57 MCP tools<br/>sketch · features · assembly · simulation · batch · inspect · drawing · capture"]
         RIR["rebuild_from_ir · save_analysis · compare_parts"]
         SFG["submit_feature_graph<br/>forward single tool"]
     end
@@ -86,7 +88,7 @@ flowchart TD
     SFG -. "REST" .-> CO
 ```
 
-Read the diagram by line style: a **thick line works today**, a **dashed line is planned**. Two MCP doors are live — the 43-tool MCP surface (the primary path today), and **`rebuild_from_ir`**, which drives the **real** deterministic compiler to reproduce a part from its Feature Graph IR. The dotted reverse arrow is the discovery step: `analyze_model`/`analyze_drawing` read an existing part so an IR can be proposed for it. The only dashed (still-planned) piece is the *forward* collapse — a single `submit_feature_graph` tool that would replace the low-level surface for building from scratch; it runs through the same compiler.
+Read the diagram by line style: a **thick line works today**, a **dashed line is planned**. Two MCP doors are live — the 57-tool MCP surface (the primary path today), and **`rebuild_from_ir`**, which drives the **real** deterministic compiler to reproduce a part from its Feature Graph IR. The dotted reverse arrow is the discovery step: `analyze_model`/`analyze_drawing` read an existing part so an IR can be proposed for it. The only dashed (still-planned) piece is the *forward* collapse — a single `submit_feature_graph` tool that would replace the low-level surface for building from scratch; it runs through the same compiler.
 
 The system has four layers:
 
@@ -150,6 +152,17 @@ The system currently exposes **43 tools**; a contract test keeps the adapter and
 
 ### Agent efficiency
 - `execute_batch` — runs up to 100 ordered low-level operations in one MCP call; exact references such as `$last.features.0` reuse earlier results.
+- `search_solidworks_references` — searches locally indexed SolidWorks books and returns short, page-cited passages. Source PDFs and extracted page indexes remain local under `.solidpilot/` and are not committed.
+
+### Local book references
+
+Put machine-specific PDF paths in `.solidpilot/references.json`, then build the ignored page index:
+
+```powershell
+python scripts/build_reference_index.py
+```
+
+The indexer requires `pypdf`. It stores page text in `.solidpilot/reference-index/`; the MCP search tool returns compact snippets with the book title, PDF page number, and original local path. Rebuild the index after replacing a PDF.
 - `solidworks_help` — returns detailed workflow guidance only when requested, keeping the always-loaded tool schema substantially smaller.
 
 ### Analysis pipeline & IR round-trip

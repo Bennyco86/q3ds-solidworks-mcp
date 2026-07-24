@@ -80,6 +80,12 @@
       <Private>False</Private>
       <EmbedInteropTypes>False</EmbedInteropTypes>
     </Reference>
+    <Reference Include="SolidWorks.Interop.cosworks">
+      <HintPath>C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS\api\redist\SolidWorks.Interop.cosworks.dll</HintPath>
+      <Private>True</Private>
+      <EmbedInteropTypes>False</EmbedInteropTypes>
+    </Reference>
+    <Reference Include="Microsoft.CSharp" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Controllers\ToolController.cs" />
@@ -92,6 +98,7 @@
     <Compile Include="Models\ToolRequest.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Services\SolidWorksService.cs" />
+    <Compile Include="Services\SolidWorksService.Simulation.cs" />
     <Compile Include="Startup.cs" />
   </ItemGroup>
   <ItemGroup>

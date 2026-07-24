@@ -10,6 +10,7 @@ from config import (
     HEALTH_ENDPOINT,
     ENSURE_ENDPOINT,
     HTTP_TIMEOUT,
+    SIMULATION_TIMEOUT,
     ENSURE_TIMEOUT,
     EXECUTION_EXE_PATH,
     SERVER_SPAWN_TIMEOUT,
@@ -184,15 +185,17 @@ def call_tool(tool_name: str, operation_id: str, state_version: int, params: dic
 
     _log(f"-> {tool_name} op={operation_id} sv={state_version}")
 
+    request_timeout = SIMULATION_TIMEOUT if tool_name == "sim_mesh_and_run" else HTTP_TIMEOUT
+
     def _do():
-        return _client.post(EXECUTE_ENDPOINT, json=payload)
+        return _client.post(EXECUTE_ENDPOINT, json=payload, timeout=request_timeout)
 
     try:
         response = _request_with_autostart(_do, tool_name)
     except httpx.TimeoutException:
-        _log(f"<- {tool_name} TIMEOUT after {HTTP_TIMEOUT}s")
+        _log(f"<- {tool_name} TIMEOUT after {request_timeout}s")
         raise ExecutionLayerError(
-            f"Request to solidworks-execution timed out after {HTTP_TIMEOUT}s."
+            f"Request to solidworks-execution timed out after {request_timeout}s."
         )
 
     if response.status_code == 400:

@@ -697,5 +697,116 @@
             }
         },
         "output": "Concise topic guidance string."
+    },
+    "sim_create_study": {
+        "description": "Creates and activates a SolidWorks Simulation static or topology study on the active part or assembly.",
+        "input": {
+            "operation_id": "string (required, unique idempotency key)",
+            "state_version": "integer (required, must match current execution state)",
+            "params": {
+                "name": "string (required, letters/digits/underscores only)",
+                "study_type": "string enum: static|topology (optional, default static)"
+            }
+        },
+        "output": "-> see execution-response.json; result_geometry reports study name, type, and index."
+    },
+    "sim_add_fixture": {
+        "description": "Adds a fixed-geometry restraint to faces selected by model-space coordinates in meters.",
+        "input": {
+            "operation_id": "string (required, unique idempotency key)",
+            "state_version": "integer (required, must match current execution state)",
+            "params": {
+                "study_name": "string (required)",
+                "faces": "string at MCP boundary: JSON array of {x,y,z} face coordinates in model-space meters; execution receives an array"
+            }
+        },
+        "output": "-> see execution-response.json; result_geometry reports fixture type, face count, and load/restraint count."
+    },
+    "sim_add_force": {
+        "description": "Adds a signed total force normal to one or more faces selected by model-space coordinates.",
+        "input": {
+            "operation_id": "string (required, unique idempotency key)",
+            "state_version": "integer (required, must match current execution state)",
+            "params": {
+                "study_name": "string (required)",
+                "faces": "string at MCP boundary: JSON array of {x,y,z} face coordinates in model-space meters; execution receives an array",
+                "newtons": "number (required, signed total normal force in N)"
+            }
+        },
+        "output": "-> see execution-response.json; result_geometry reports force, face count, and load/restraint count."
+    },
+    "sim_mesh_and_run": {
+        "description": "Creates a Simulation mesh and synchronously solves the named study. The adapter uses a dedicated long timeout.",
+        "input": {
+            "operation_id": "string (required, unique idempotency key)",
+            "state_version": "integer (required, must match current execution state)",
+            "params": {
+                "study_name": "string (required)",
+                "element_size": "number > 0 (optional, default 0.006 meters)",
+                "tolerance": "number > 0 (optional, default 0.0003 meters)",
+                "draft_quality": "boolean (optional, default false for high quality)"
+            }
+        },
+        "output": "-> see execution-response.json; result_geometry reports mesh size and solved=true."
+    },
+    "sim_get_results": {
+        "description": "Reads min/max von Mises stress, resultant displacement, and factor of safety from a solved static study.",
+        "input": {
+            "operation_id": "string (required)",
+            "state_version": "integer (required)",
+            "params": {
+                "study_name": "string (required)",
+                "yield_strength_pa": "number >= 0 (optional, Pa; zero uses the assigned material, otherwise computes user-defined von Mises FOS)"
+            }
+        },
+        "output": "-> see execution-response.json; read-only result_geometry contains stress in N/m^2, displacement in meters, factor of safety, and COM result codes."
+    },
+    "sim_topology_setup": {
+        "description": "Configures the goal, mass reduction, preserved faces, and printable minimum member thickness for a topology study.",
+        "input": {
+            "operation_id": "string (required, unique idempotency key)",
+            "state_version": "integer (required, must match current execution state)",
+            "params": {
+                "study_name": "string (required; must identify a topology study)",
+                "goal": "string enum: best_stiffness|minimize_mass (optional, default best_stiffness)",
+                "mass_reduction_percent": "number > 0 and < 100 (optional, default 50)",
+                "preserved_faces": "string at MCP boundary: JSON array of {x,y,z} face coordinates in model-space meters (optional, default [])",
+                "min_thickness": "number >= 0 (optional, meters; default 0.003; zero disables the control)"
+            }
+        },
+        "output": "-> see execution-response.json; result_geometry lists every applied topology control and COM return code."
+    },
+    "sim_list_studies": {
+        "description": "Lists all SolidWorks Simulation studies on the active document without changing state.",
+        "input": {
+            "operation_id": "string (required)",
+            "state_version": "integer (required)",
+            "params": {}
+        },
+        "output": "-> see execution-response.json; result_geometry contains count and studies [{index,name,analysis_type}]."
+    },
+    "sim_delete_study": {
+        "description": "Deletes a named SolidWorks Simulation study from the active document.",
+        "input": {
+            "operation_id": "string (required, unique idempotency key)",
+            "state_version": "integer (required, must match current execution state)",
+            "params": {
+                "name": "string (required)"
+            }
+        },
+        "output": "-> see execution-response.json; result_geometry reports the deleted study name."
+    },
+    "search_solidworks_references": {
+        "description": "ADAPTER-ONLY: search the locally indexed SolidWorks reference books by page and return short cited passages. Read-only; source PDFs and the index stay outside the repository (gitignored .solidpilot/).",
+        "input": {
+            "operation_id": "n/a at adapter level",
+            "state_version": "n/a (reads the local index directly, no execution-layer call)",
+            "params": {
+                "query": "string (required — words to search; short tokens are ignored)",
+                "source": "string (optional, default 'all' — 'all' | 'flow_simulation_2024' | 'advanced_solidworks_2025')",
+                "max_results": "integer (optional, default 5; 1..10)"
+            }
+        },
+        "output": "Text: page-cited passages (book title + PDF page), or a no-match note."
     }
 }

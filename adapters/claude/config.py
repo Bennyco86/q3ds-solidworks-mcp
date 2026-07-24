@@ -12,6 +12,7 @@ STATE_ENDPOINT = f"{EXECUTION_BASE_URL}/api/tool/state"
 HEALTH_ENDPOINT = f"{EXECUTION_BASE_URL}/health"
 ENSURE_ENDPOINT = f"{EXECUTION_BASE_URL}/ensure_ready"
 HTTP_TIMEOUT = float(os.getenv("HTTP_TIMEOUT", "30"))
+SIMULATION_TIMEOUT = float(os.getenv("SIMULATION_TIMEOUT", "600"))
 # ensure_ready may cold-launch SolidWorks, which can take tens of seconds — give it room.
 ENSURE_TIMEOUT = float(os.getenv("ENSURE_TIMEOUT", "120"))
 

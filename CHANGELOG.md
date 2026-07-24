@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Added `search_solidworks_references` for short, page-cited retrieval from locally owned SolidWorks PDFs.
+- Added `scripts/build_reference_index.py`; PDFs stay external and generated page indexes remain under the gitignored `.solidpilot/` directory.
+- Added eight SolidWorks Simulation tools: create/list/delete static and topology studies, add fixed
+  fixtures and normal forces, mesh and solve, extract stress/displacement/factor-of-safety results,
+  and configure topology goals, mass reduction, preserved faces, and minimum thickness.
+- Added strict adapter-side validation for model-space face-coordinate arrays and a dedicated
+  `SIMULATION_TIMEOUT` (600 seconds by default) for synchronous meshing and solves.
+- Corrected Simulation COM interop for dispatch-array face selections, mesh length units and quality,
+  result-array ordering/units, material-free user-yield FoS fallback, and topology edit transactions.
+
 This file records changes made by the independently maintained fork after upstream commit
 `a7348f0`. Upstream history remains available in Git.
 

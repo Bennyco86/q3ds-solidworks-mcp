@@ -186,6 +186,14 @@ namespace SolidworksExecution.Controllers
                 case "modify_dimension":       return _service.ModifyDimension(request);
                 case "edit_feature":           return _service.EditFeature(request);
                 case "activate_document":      return _service.ActivateDocument(request);
+                case "sim_create_study":       return _service.SimCreateStudy(request);
+                case "sim_add_fixture":        return _service.SimAddFixture(request);
+                case "sim_add_force":          return _service.SimAddForce(request);
+                case "sim_mesh_and_run":       return _service.SimMeshAndRun(request);
+                case "sim_get_results":        return _service.SimGetResults(request);
+                case "sim_topology_setup":     return _service.SimTopologySetup(request);
+                case "sim_list_studies":       return _service.SimListStudies(request);
+                case "sim_delete_study":       return _service.SimDeleteStudy(request);
                 default:                       return null;
             }
         }
