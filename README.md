@@ -21,7 +21,7 @@ SolidPilot is **not** a Claude-only plugin; it is **a general bridge between Sol
 
 ## Fork additions
 
-The fork currently exposes **57 MCP tools**. Its improvement passes add native sketch text,
+The fork currently exposes **58 MCP tools**. Its improvement passes add native sketch text,
 single- and multi-view model screenshots, compact JSON responses, batched execution, compact
 model inspection, revolved cuts, persistent HTTP connections, multi-region boss recovery, higher
 volume precision, clearer diagnostics, a first native assembly slice (insert components,
@@ -29,7 +29,8 @@ coincident/concentric/distance mates via persistent face references, read-only a
 analysis), and a reference-modeling workflow (load/crop design photos, reference-vs-model
 comparison montages, an on-demand photo-to-part protocol). Eight SolidWorks Simulation tools add
 static/topology study creation, fixtures, forces, meshing/solving, result extraction, topology
-controls, study listing, and deletion. See [CHANGELOG.md](CHANGELOG.md)
+controls, study listing, and deletion. `knit_surfaces` joins surface bodies into one knit feature
+(optionally forming a solid, with honest solid/open reporting). See [CHANGELOG.md](CHANGELOG.md)
 for release history.
 
 ---
@@ -54,7 +55,7 @@ flowchart TD
     U(["User + AI client<br/>Claude · OpenClaw · OpenAI · local LLM"])
 
     subgraph ADAPT["adapters/* — MCP bridge · MCP BOUNDARY = top"]
-        LOW["57 MCP tools<br/>sketch · features · assembly · simulation · batch · inspect · drawing · capture"]
+        LOW["58 MCP tools<br/>sketch · features · surfaces · assembly · simulation · batch · inspect · drawing · capture"]
         RIR["rebuild_from_ir · save_analysis · compare_parts"]
         SFG["submit_feature_graph<br/>forward single tool"]
     end
@@ -88,7 +89,7 @@ flowchart TD
     SFG -. "REST" .-> CO
 ```
 
-Read the diagram by line style: a **thick line works today**, a **dashed line is planned**. Two MCP doors are live — the 57-tool MCP surface (the primary path today), and **`rebuild_from_ir`**, which drives the **real** deterministic compiler to reproduce a part from its Feature Graph IR. The dotted reverse arrow is the discovery step: `analyze_model`/`analyze_drawing` read an existing part so an IR can be proposed for it. The only dashed (still-planned) piece is the *forward* collapse — a single `submit_feature_graph` tool that would replace the low-level surface for building from scratch; it runs through the same compiler.
+Read the diagram by line style: a **thick line works today**, a **dashed line is planned**. Two MCP doors are live — the 58-tool MCP surface (the primary path today), and **`rebuild_from_ir`**, which drives the **real** deterministic compiler to reproduce a part from its Feature Graph IR. The dotted reverse arrow is the discovery step: `analyze_model`/`analyze_drawing` read an existing part so an IR can be proposed for it. The only dashed (still-planned) piece is the *forward* collapse — a single `submit_feature_graph` tool that would replace the low-level surface for building from scratch; it runs through the same compiler.
 
 The system has four layers:
 

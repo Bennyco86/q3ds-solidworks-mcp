@@ -171,6 +171,7 @@ namespace SolidworksExecution.Controllers
                 case "add_section_view":       return _service.AddSectionView(request);
                 case "save_document":          return _service.SaveDocument(request);
                 case "export_document":        return _service.ExportDocument(request);
+                case "knit_surfaces":          return _service.KnitSurfaces(request);
                 case "batch_export":           return _service.BatchExport(request);
                 case "extrude_feature":        return _service.ExtrudeFeature(request);
                 case "verify_state":           return _service.VerifyState(request);

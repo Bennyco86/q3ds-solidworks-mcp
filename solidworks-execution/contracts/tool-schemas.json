@@ -423,6 +423,21 @@
         },
         "output": "→ see execution-response.json"
     },
+    "knit_surfaces": {
+        "description": "Knits every sheet/surface body in the active part into one surface-knit feature (InsertSewRefSurface). Selects all surface bodies with the SolidWorks-required Mark=1, validates the tolerance range, and reports whether Try-to-form-solid actually produced a solid instead of silently accepting an open knit. Requires an active part with >= 2 surface bodies.",
+        "input": {
+            "operation_id": "string (required, unique idempotency key)",
+            "state_version": "integer (required, must match current execution state)",
+            "params": {
+                "try_form_solid": "boolean (optional, default true — attempt to close the knit into a solid)",
+                "merge_entities": "boolean (optional, default true)",
+                "use_gap_filters": "boolean (optional, default true)",
+                "knit_tolerance": "number (optional, default 1e-5 metres; allowed 1e-7 to 1e-4)",
+                "max_gap": "number (optional, default 1e-4 metres; must be >= knit_tolerance and <= 1e-4)"
+            }
+        },
+        "output": "→ see execution-response.json — Verified is false when try_form_solid=true but only an open surface knit resulted; Features reports the feature name (Surface_Knit_Solid/Open), selected surface count, formed_solid, and tolerance; result_geometry is the body summary."
+    },
     "batch_export": {
         "description": "Exports the active document to multiple formats in one call. Each format saved as file_path_base.<ext>. DWG/DXF skipped if active doc is not a drawing. Partial success reported in response Features list. state_version is NOT incremented.",
         "input": {

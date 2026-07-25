@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added `knit_surfaces`: knit every sheet/surface body in the active part into one surface-knit
+  feature, optionally forming a solid. `formed_solid` and the Verified flag report whether a solid
+  ACTUALLY formed (checked by solid-body count delta, not the input request flag). Live-verified on
+  both an open two-surface knit and a watertight six-surface shell that closes into a solid.
 - Added `search_solidworks_references` for short, page-cited retrieval from locally owned SolidWorks PDFs.
 - Added `scripts/build_reference_index.py`; PDFs stay external and generated page indexes remain under the gitignored `.solidpilot/` directory.
 - Added eight SolidWorks Simulation tools: create/list/delete static and topology studies, add fixed

@@ -3029,6 +3029,123 @@ namespace SolidworksExecution.Services
             }
         }
 
+        public ExecutionResponse KnitSurfaces(ToolRequest request)
+        {
+            if (_guard.IsDuplicate(request.OperationId))
+                return _guard.GetDuplicate(request.OperationId);
+
+            if (!_guard.IsStateVersionValid(request.StateVersion))
+                return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                    "INVALID_STATE_VERSION", "Incoming state_version does not match current state.");
+
+            if (!EnsureConnected())
+                return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                    "COM_ATTACH_FAILED", "SolidWorks process not found or COM not registered.");
+
+            try
+            {
+                var p = request.Params as JObject;
+                bool tryFormSolid = p?.Value<bool?>("try_form_solid") ?? true;
+                bool mergeEntities = p?.Value<bool?>("merge_entities") ?? true;
+                bool useGapFilters = p?.Value<bool?>("use_gap_filters") ?? true;
+                double knitTolerance = p?.Value<double?>("knit_tolerance") ?? 0.00001;
+                double maxGap = p?.Value<double?>("max_gap") ?? 0.0001;
+
+                // Documented SOLIDWORKS range: 0.0001 mm to 0.1 mm, expressed here in metres.
+                if (knitTolerance < 0.0000001 || knitTolerance > 0.0001)
+                    return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                        "INVALID_TOLERANCE", "knit_tolerance must be between 1e-7 and 1e-4 metres (0.0001 to 0.1 mm)." );
+                if (maxGap < knitTolerance || maxGap > 0.0001)
+                    return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                        "INVALID_GAP_RANGE", "max_gap must be >= knit_tolerance and <= 1e-4 metres (0.1 mm)." );
+
+                var modelDoc = _solidWorks.IActiveDoc2 as IModelDoc2;
+                var partDoc = modelDoc as IPartDoc;
+                if (modelDoc == null || partDoc == null)
+                    return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                        "PART_REQUIRED", "knit_surfaces requires an active SolidWorks part document.");
+
+                object[] sheetBodies = partDoc.GetBodies2((int)swBodyType_e.swSheetBody, false) as object[];
+                if (sheetBodies == null || sheetBodies.Length < 2)
+                    return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                        "SURFACES_REQUIRED", "At least two sheet/surface bodies are required for knit_surfaces.");
+
+                modelDoc.ClearSelection2(true);
+                var selectionManager = modelDoc.SelectionManager as ISelectionMgr;
+                var selectData = selectionManager?.CreateSelectData();
+                if (selectData == null)
+                    return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                        "SELECTION_DATA_FAILED", "Could not create SolidWorks selection data for surface knitting.");
+
+                // InsertSewRefSurface requires every surface selection to use Mark=1.
+                selectData.Mark = 1;
+                int selected = 0;
+                foreach (object item in sheetBodies)
+                {
+                    var body = item as IBody2;
+                    if (body != null && body.Select2(true, selectData)) selected++;
+                }
+                int markedCount = selectionManager.GetSelectedObjectCount2(1);
+                if (selected != sheetBodies.Length || markedCount != sheetBodies.Length)
+                    return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                        "SURFACE_SELECTION_FAILED", $"Selected {selected}/{sheetBodies.Length} surface bodies; mark-1 count is {markedCount}.");
+
+                // Solid-body count BEFORE the knit. `ISurfaceKnitFeatureData.UseTryToFormSolid`
+                // is the INPUT request, NOT the outcome — the only reliable way to know whether a
+                // solid actually formed is to see a new solid body appear (verified live: an open
+                // 2-surface "L" was mislabelled Surface_Knit_Solid when the input flag was used).
+                object[] solidsBeforeArr = partDoc.GetBodies2((int)swBodyType_e.swSolidBody, false) as object[];
+                int solidsBefore = solidsBeforeArr?.Length ?? 0;
+
+                var feature = modelDoc.FeatureManager.InsertSewRefSurface(
+                    useGapFilters, tryFormSolid, mergeEntities, knitTolerance, maxGap);
+                if (feature == null)
+                    return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(),
+                        "KNIT_FAILED", $"SolidWorks returned no knit feature for {sheetBodies.Length} surfaces (tolerance={knitTolerance:G6} m, max_gap={maxGap:G6} m)." );
+
+                object[] solidsAfterArr = partDoc.GetBodies2((int)swBodyType_e.swSolidBody, false) as object[];
+                int solidsAfter = solidsAfterArr?.Length ?? 0;
+                bool formedSolid = tryFormSolid && solidsAfter > solidsBefore;
+                feature.Name = formedSolid ? "Surface_Knit_Solid" : "Surface_Knit_Open";
+
+                var response = new ExecutionResponse
+                {
+                    OperationId = request.OperationId,
+                    Status = "COMPLETED",
+                    Verified = !tryFormSolid || formedSolid,
+                    StateVersion = _guard.GetCurrentStateVersion() + 1,
+                    CadState = new CadState
+                    {
+                        StateVersion = _guard.GetCurrentStateVersion() + 1,
+                        ActiveDocument = modelDoc.GetTitle(),
+                        DocumentType = "PART",
+                        ActiveSketch = null,
+                        Features = new List<string>
+                        {
+                            feature.Name,
+                            $"selected_surfaces={sheetBodies.Length}",
+                            $"formed_solid={formedSolid}",
+                            $"knit_tolerance_m={knitTolerance:G6}"
+                        },
+                        Dimensions = new List<string>()
+                    },
+                    ResultGeometry = BuildBodySummary(modelDoc),
+                    Error = null
+                };
+
+                _guard.RegisterCompleted(request.OperationId, response);
+                return response;
+            }
+            catch (COMException ex)
+            {
+                return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(), "COM_ERROR", ex.Message);
+            }
+            catch (Exception ex)
+            {
+                return BuildFailed(request.OperationId, _guard.GetCurrentStateVersion(), "UNEXPECTED_ERROR", ex.Message);
+            }
+        }
+
         public ExecutionResponse ExportDocument(ToolRequest request)
         {
             if (_guard.IsDuplicate(request.OperationId))

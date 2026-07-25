@@ -938,6 +938,34 @@ def export_document(format: Literal["STEP", "IGES", "STL", "PDF", "DWG", "DXF"],
 
 
 # ---------------------------------------------------------------------------
+# Tool: knit_surfaces
+# ---------------------------------------------------------------------------
+@mcp.tool(description="Knit all sheet/surface bodies in the active part into one surface-knit feature; optionally try to form a solid. Requires at least two surface bodies. Verified=false means try_form_solid was requested but only an open knit resulted.")
+def knit_surfaces(
+    try_form_solid: bool = True,
+    merge_entities: bool = True,
+    use_gap_filters: bool = True,
+    knit_tolerance: Annotated[float, Field(
+        ge=1e-7, le=1e-4, description="Knit tolerance in METERS (1e-7..1e-4 = 0.0001..0.1mm)")] = 1e-5,
+    max_gap: Annotated[float, Field(
+        gt=0, le=1e-4, description="Max gap to bridge in METERS (>= knit_tolerance, <= 1e-4)")] = 1e-4,
+) -> str:
+    """Knit every sheet/surface body in the ACTIVE part into one surface-knit feature
+    (SolidWorks Insert > Surface > Knit). Needs >= 2 surface bodies present. With
+    try_form_solid=True, SolidWorks attempts to close the knit into a solid — the result's
+    `formed_solid` and the response's Verified flag report whether that actually succeeded
+    (Verified=False = only an open surface knit was produced). knit_tolerance and max_gap are
+    meters; max_gap must be >= knit_tolerance and <= 1e-4 (0.1mm)."""
+    return _call("knit_surfaces", {
+        "try_form_solid": try_form_solid,
+        "merge_entities": merge_entities,
+        "use_gap_filters": use_gap_filters,
+        "knit_tolerance": knit_tolerance,
+        "max_gap": max_gap,
+    })
+
+
+# ---------------------------------------------------------------------------
 # Tool: batch_export
 # ---------------------------------------------------------------------------
 @mcp.tool()

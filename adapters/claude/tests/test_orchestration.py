@@ -175,5 +175,41 @@ class AssemblyOrchestrationTests(unittest.TestCase):
         self.assertIs(seen["params"]["fixed"], False)
 
 
+class KnitSurfacesTests(unittest.TestCase):
+    def test_knit_surfaces_defaults(self):
+        seen = {}
+
+        def fake_call(tool, params):
+            seen["tool"] = tool
+            seen["params"] = params
+            return '{"ok":true}'
+
+        with patch.object(server, "_call", fake_call):
+            server.knit_surfaces()
+
+        self.assertEqual(seen["tool"], "knit_surfaces")
+        self.assertEqual(seen["params"], {
+            "try_form_solid": True,
+            "merge_entities": True,
+            "use_gap_filters": True,
+            "knit_tolerance": 1e-5,
+            "max_gap": 1e-4,
+        })
+
+    def test_knit_surfaces_open_knit_options(self):
+        seen = {}
+
+        def fake_call(tool, params):
+            seen["params"] = params
+            return '{"ok":true}'
+
+        with patch.object(server, "_call", fake_call):
+            server.knit_surfaces(try_form_solid=False, knit_tolerance=5e-6, max_gap=5e-5)
+
+        self.assertIs(seen["params"]["try_form_solid"], False)
+        self.assertEqual(seen["params"]["knit_tolerance"], 5e-6)
+        self.assertEqual(seen["params"]["max_gap"], 5e-5)
+
+
 if __name__ == "__main__":
     unittest.main()
