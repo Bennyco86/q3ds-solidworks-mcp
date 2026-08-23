@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="SolidPilot is an early-alpha open-source MCP bridge for inspecting, building, editing, analysing, and verifying SOLIDWORKS 2026 models.">
+  <title>SolidPilot for SOLIDWORKS — AI-assisted CAD</title>
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body id="top">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="SolidPilot home">
+      <span class="brand-mark" aria-hidden="true">SP</span>
+      <span><strong>SolidPilot</strong><small>for SOLIDWORKS · Aotearoa Labs</small></span>
+    </a>
+    <nav aria-label="Primary navigation">
+      <a href="#workflow">Workflow</a>
+      <a href="#capabilities">Capabilities</a>
+      <a href="#requirements">Requirements</a>
+      <a href="#support">Support</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero wrap">
+      <div class="hero-copy">
+        <p class="eyebrow">Open-source MCP bridge · Early alpha</p>
+        <h1>Give AI real tools inside <em>SOLIDWORKS.</em></h1>
+        <p class="lede">SolidPilot turns higher-level CAD intent into controlled feature operations while keeping the live SOLIDWORKS model as the source of truth.</p>
+        <div class="hero-actions">
+          <a class="button" href="https://github.com/Bennyco86/q3ds-solidworks-mcp">View the project on GitHub</a>
+          <a class="button button-secondary" href="README.md">Read the setup guide</a>
+        </div>
+        <p class="microcopy">Working prototype for Windows and SOLIDWORKS 2026. Expect rough edges and breaking changes.</p>
+      </div>
+
+      <figure class="drawing-board">
+        <div class="drawing-title"><span>PARAMETRIC OUTPUT</span><span>SW-001</span></div>
+        <img src="assets/solidpilot-flanges.png" alt="AS 2129 Table E DN100 double-flanged spool created through a SolidPilot SOLIDWORKS workflow">
+        <span class="dimension dimension-x">Ø215 mm</span>
+        <span class="dimension dimension-y">8 × Ø18 holes</span>
+        <figcaption><b>Feature-built, inspectable CAD</b><span>Table E double-flanged spool generated and verified in SOLIDWORKS.</span></figcaption>
+      </figure>
+    </section>
+
+    <section class="status-strip">
+      <div class="wrap">
+        <div><strong>50+</strong><span>CAD and analysis tools</span></div>
+        <div><strong>Local</strong><span>SOLIDWORKS execution</span></div>
+        <div><strong>2026</strong><span>target SOLIDWORKS release</span></div>
+        <div><strong>AGPL</strong><span>open-source licence</span></div>
+      </div>
+    </section>
+
+    <section class="workflow wrap" id="workflow">
+      <div class="section-heading">
+        <p class="eyebrow">A verifiable loop</p>
+        <h2>Describe. Build. Inspect. Correct.</h2>
+      </div>
+      <ol class="steps">
+        <li><span>01</span><h3>Connect</h3><p>An MCP-capable client talks to the local execution service.</p></li>
+        <li><span>02</span><h3>Model</h3><p>Controlled sketch and feature operations change the real document.</p></li>
+        <li><span>03</span><h3>Inspect</h3><p>Topology, properties, screenshots, and responses report the current state.</p></li>
+        <li><span>04</span><h3>Verify</h3><p>The client checks the result, corrects problems, and can export the model.</p></li>
+      </ol>
+    </section>
+
+    <section class="capabilities" id="capabilities">
+      <div class="wrap">
+        <div class="section-heading">
+          <p class="eyebrow">Current tool surface</p>
+          <h2>Feature-level CAD, not mouse-position theatre.</h2>
+        </div>
+        <div class="capability-grid">
+          <article><span>PARTS</span><h3>Sketch and feature modelling</h3><p>Build bosses, cuts, revolves, sweeps, lofts, patterns, sheet-metal features, and more.</p></article>
+          <article><span>TRUTH</span><h3>Inspection and visual capture</h3><p>Read model structure and mass properties, then capture views of the actual document.</p></article>
+          <article><span>OUTPUT</span><h3>Drawings and exports</h3><p>Create drawing views and export supported CAD, mesh, drawing, and document formats.</p></article>
+          <article><span>SYSTEMS</span><h3>Assembly and simulation helpers</h3><p>Use the developing assembly slice and supported simulation operations where licensed.</p></article>
+          <article class="wide"><span>EXPERIMENTAL FOUNDATION</span><h3>Batch execution and a Feature Graph compiler are exploring reproducible CAD builds.</h3><p>The forward compiler workflow is still experimental. Durable references across topology-changing edits and some advanced operations remain active development areas.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="requirements wrap" id="requirements">
+      <div>
+        <p class="eyebrow">Before you install</p>
+        <h2>A local engineering toolchain.</h2>
+        <p>SolidPilot does not provide SOLIDWORKS. It connects an MCP client to software and licences already available on your Windows workstation.</p>
+      </div>
+      <ul>
+        <li><strong>Windows</strong><span>Local execution host</span></li>
+        <li><strong>SOLIDWORKS 2026</strong><span>Running desktop session</span></li>
+        <li><strong>.NET Framework 4.8.1</strong><span>Developer Pack and MSBuild</span></li>
+        <li><strong>Python 3.12</strong><span>MCP adapter runtime</span></li>
+        <li><strong>MCP-capable client</strong><span>Your AI workflow</span></li>
+      </ul>
+    </section>
+
+    <section class="support" id="support">
+      <div class="wrap support-grid">
+        <div>
+          <p class="eyebrow">Support and development</p>
+          <h2>Found a repeatable failure? Bring the evidence.</h2>
+          <p>Include the SOLIDWORKS release, SolidPilot commit, tool request, response, and the smallest reproducible model you can safely share. Never post licence keys, credentials, or confidential CAD.</p>
+        </div>
+        <div class="support-actions">
+          <a class="button" href="https://github.com/Bennyco86/q3ds-solidworks-mcp/issues">Open a GitHub issue</a>
+          <a href="SUPPORT.md">Read the support checklist →</a>
+          <a href="SECURITY.md">Report a security concern →</a>
+        </div>
+      </div>
+    </section>
+
+    <aside class="legal-note wrap">
+      <strong>Independent project.</strong>
+      <p>SolidPilot is not affiliated with, authorised by, or endorsed by Dassault Systèmes or SOLIDWORKS. SOLIDWORKS is a trademark of Dassault Systèmes SolidWorks Corporation.</p>
+    </aside>
+  </main>
+
+  <footer class="wrap">
+    <p>SolidPilot <span aria-hidden="true">/</span> Aotearoa Labs</p>
+    <div>
+      <a href="https://aotearoa-labs.netlify.app/software/solidpilot-solidworks/">Aotearoa Labs</a>
+      <a href="README.md">Documentation</a>
+      <a href="LICENSE">Licence</a>
+      <a href="SUPPORT.md">Support</a>
+    </div>
+  </footer>
+</body>
+</html>
